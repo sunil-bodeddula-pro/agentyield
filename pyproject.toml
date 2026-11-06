@@ -40,6 +40,9 @@ version = { attr = "agentyield.__version__" }
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+agentyield = ["static/*.html"]
+
 [tool.ruff]
 line-length = 120
 target-version = "py312"

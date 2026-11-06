@@ -119,6 +119,12 @@ def apply(
             "rules": rules_hash(cfg),
             "repos": snapshot(resolved),
         }
+        if results:
+            manifest["last_sync"] = {
+                "at": iso(datetime.now(UTC)),
+                "fetched": sum(r.fetched for r in results),
+                "errors": [f"{r.repo}: {r.error}" for r in results if r.error],
+            }
         store.save_manifest(manifest)
         recompute(store, cfg, resolved)
         return changes, results

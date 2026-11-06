@@ -7,6 +7,7 @@ limit), follows `Link: rel="next"` pagination, and reports the rate limit left. 
 from __future__ import annotations
 
 import base64
+import calendar
 import json
 import os
 import re
@@ -51,14 +52,69 @@ def token_from(env_name: str = "GITHUB_TOKEN") -> str:
     raise SystemExit(f"No GitHub credentials: set {env_name}, or sign in with `gh auth login`.")
 
 
+class AppToken:
+    """Installation tokens for a GitHub App, renewed five minutes before they expire (they last an hour)."""
+
+    def __init__(self, app_id: str, private_key_pem: str, installation_id: str, api_url: str):
+        from .appauth import load_private_key  # noqa: PLC0415
+
+        self.app_id, self.installation_id, self.api_url = app_id, installation_id, api_url.rstrip("/")
+        self.key = load_private_key(private_key_pem)
+        self._token, self._expires = "", 0.0
+
+    def __call__(self) -> str:
+        if not self._token or time.time() > self._expires - 300:
+            from .appauth import app_jwt  # noqa: PLC0415
+
+            data = post_json(
+                f"{self.api_url}/app/installations/{self.installation_id}/access_tokens",
+                {},
+                {"Authorization": f"Bearer {app_jwt(self.app_id, self.key)}"},
+            )
+            self._token = str(data["token"])
+            expires = str(data.get("expires_at") or "")
+            self._expires = (
+                calendar.timegm(time.strptime(expires, "%Y-%m-%dT%H:%M:%SZ")) if expires else time.time() + 3600
+            )
+        return self._token
+
+
+def post_json(
+    url: str, body: dict[str, Any], headers: dict[str, str] | None = None, form: bool = False, timeout: float = 30
+) -> Any:
+    """The only POSTs AgentYield makes: trading an App JWT for an installation token, and an OAuth code for a
+    user token. Neither changes anything on GitHub."""
+    data = urllib.parse.urlencode(body).encode() if form else json.dumps(body).encode()
+    req = urllib.request.Request(url, data=data, method="POST")
+    req.add_header("Accept", "application/json")
+    req.add_header("Content-Type", "application/x-www-form-urlencoded" if form else "application/json")
+    req.add_header("User-Agent", "agentyield")
+    req.add_header("X-GitHub-Api-Version", API_VERSION)
+    for k, v in (headers or {}).items():
+        req.add_header(k, v)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read() or b"{}")
+    except urllib.error.HTTPError as err:
+        try:
+            message = json.loads(err.read()).get("message", err.reason)
+        except ValueError:
+            message = str(err.reason)
+        raise GitHubError(err.code, str(message)) from None
+
+
 class GitHub:
-    def __init__(self, token: str, api_url: str = "https://api.github.com", timeout: float = 30):
-        self.token = token
+    def __init__(self, token: str | Any, api_url: str = "https://api.github.com", timeout: float = 30):
+        self._token = token  # a string, or a callable that returns a fresh token (GitHub App)
         self.api_url = api_url.rstrip("/")
         self.timeout = timeout
         self.rate_remaining: int | None = None
         self.rate_reset: int | None = None
         self.requests = 0
+
+    @property
+    def token(self) -> str:
+        return self._token() if callable(self._token) else str(self._token)
 
     def _url(self, path: str, params: dict[str, Any] | None = None) -> str:
         url = path if path.startswith("http") else f"{self.api_url}{path}"

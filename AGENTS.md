@@ -26,6 +26,8 @@ Run all of them before saying a change is done, and report the results honestly.
 | `src/agentyield/sync.py` | Incremental sync and backfill; per-commit line counts for mixed PRs |
 | `src/agentyield/attribution.py`, `derive.py` | Agent, assisted or human per PR; the derived layer and admin corrections |
 | `src/agentyield/metrics.py` | Per-PR metrics, working hours, rollups, matched comparison, weekly trends |
+| `src/agentyield/web.py`, `static/dashboard.html` | Dashboard server, sign-in and access rules, static build; the page (vanilla JS, SVG charts) |
+| `src/agentyield/appauth.py` | GitHub App JWT (RS256) on the standard library |
 | `src/agentyield/ops.py` | `config diff` / `apply`, status |
 | `src/agentyield/store.py` | JSON file store and its folder, GCS and S3 backends; the writer lease |
 | `tests/mockgh.py` | Fixture organisation with planted secrets, and a fake GitHub server |
@@ -39,6 +41,8 @@ Run all of them before saying a change is done, and report the results honestly.
 - **No new runtime dependencies** beyond PyYAML (and tzdata on Windows); cloud clients stay optional extras imported lazily.
 - **Tests never use the network or real repositories.** Use the fake GitHub.
 - **Typed code.** mypy runs in strict mode.
+- **Access rules in the dashboard.** PR-level data only for repositories the viewer can read; static builds carry totals only. Tests in `tests/test_web.py` cover both; keep them.
+- **Dashboard changes:** check desktop and phone, dark and light; CI syntax-checks the page script.
 - **Keep the store format stable** under `v1/`; a breaking change needs `v2/` and a migration.
 
 ## Style

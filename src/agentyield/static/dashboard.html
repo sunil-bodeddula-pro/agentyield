@@ -1,0 +1,298 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AgentYield</title>
+<style>
+:root, [data-theme="dark"] {
+  --bg: #0f1419; --panel: #172029; --panel-2: #1e2a35; --line: #2a3a48; --ink: #e6edf3; --ink-2: #a8b6c3; --ink-3: #7a8a99;
+  --agent: #38bdf8; --assisted: #a78bfa; --human: #94a3b8; --good: #34d399; --warn: #fbbf24; --bad: #f87171;
+}
+[data-theme="light"] {
+  --bg: #f6f8fa; --panel: #ffffff; --panel-2: #f0f3f6; --line: #d4dbe2; --ink: #1b2430; --ink-2: #44515e; --ink-3: #66727e;
+  --agent: #0369a1; --assisted: #6d28d9; --human: #64748b; --good: #047857; --warn: #b45309; --bad: #b91c1c;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+button, select { font: inherit; color: inherit; }
+header { position: sticky; top: 0; z-index: 5; display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; padding: 10px 24px; background: var(--panel); border-bottom: 1px solid var(--line); }
+header h1 { margin: 0; font-size: 18px; }
+header .grow { flex: 1; }
+select, .btn { background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; }
+.btn { cursor: pointer; text-decoration: none; }
+.who { color: var(--ink-2); font-size: 14px; }
+main { max-width: 1440px; margin: 0 auto; padding: 20px 24px 48px; }
+.note { margin: 0 0 16px; padding: 10px 14px; border-radius: 10px; background: var(--panel); border: 1px solid var(--line); color: var(--ink-2); font-size: 14px; }
+.kpis { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin-bottom: 24px; }
+.kpi { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 18px 20px; }
+.kpi .l { font-size: 13px; letter-spacing: .05em; text-transform: uppercase; color: var(--ink-3); font-weight: 700; }
+.kpi .v { font-size: 32px; font-weight: 700; margin: 6px 0 4px; font-variant-numeric: tabular-nums; }
+.kpi .s { font-size: 14px; color: var(--ink-2); }
+.kpi .s b { font-weight: 600; }
+.up { color: var(--good); } .down { color: var(--bad); }
+.charts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-bottom: 24px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 18px 20px; min-width: 0; }
+.card.wide { grid-column: 1 / -1; }
+.card h2 { margin: 0 0 4px; font-size: 17px; }
+.card .sub { margin: 0 0 14px; font-size: 14px; color: var(--ink-2); }
+svg { display: block; max-width: 100%; }
+svg text { fill: var(--ink-2); font-size: 13px; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 14px; color: var(--ink-2); margin-top: 10px; }
+.legend i { display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+th, td { padding: 9px 10px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; }
+th { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--ink-3); }
+td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
+.wrap { overflow-x: auto; }
+.title { white-space: normal; min-width: 220px; }
+.pill { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+.pill.agent { background: color-mix(in srgb, var(--agent) 20%, transparent); color: var(--agent); }
+.pill.assisted { background: color-mix(in srgb, var(--assisted) 20%, transparent); color: var(--assisted); }
+.pill.human { background: color-mix(in srgb, var(--human) 20%, transparent); color: var(--ink-2); }
+.muted { color: var(--ink-3); }
+.pager { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; justify-content: space-between; margin-top: 12px; color: var(--ink-2); font-size: 14px; }
+.pager .pages { display: flex; gap: 4px; flex-wrap: wrap; }
+.pager button[disabled] { opacity: .4; cursor: default; }
+.empty { padding: 28px; text-align: center; color: var(--ink-3); }
+.hide { display: none !important; }
+@media (max-width: 1100px) { .charts { grid-template-columns: 1fr; } }
+@media (max-width: 900px) { .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 700px) { header { padding: 10px 12px; position: static; } main { padding: 12px; } .kpis { grid-template-columns: 1fr; gap: 12px; } .kpi, .card { padding: 16px; } .kpi .v { font-size: 28px; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>AgentYield</h1>
+  <label class="grow"><span class="muted">Scope </span><select id="scope" aria-label="Scope"></select></label>
+  <span class="who" id="who"></span>
+  <a class="btn hide" id="logout" href="/auth/logout">Sign out</a>
+  <button class="btn" id="theme" aria-label="Switch theme">☀</button>
+</header>
+<main>
+  <p class="note hide" id="note"></p>
+  <section class="kpis" id="kpis"></section>
+  <section class="charts" id="charts"></section>
+  <section class="card wide" id="table-card"><h2>All metrics</h2><p class="sub">Agent, assisted and human work side by side. "–" means fewer than <span id="min"></span> PRs to go on.</p><div class="wrap" id="table"></div></section>
+  <section class="card wide hide" id="prs-card" style="margin-top:16px"><h2>Pull requests</h2><p class="sub">Who wrote each one, how long it took, and how much back-and-forth it needed. Only repositories you can read on GitHub appear here.</p><div class="wrap" id="prs"></div><div class="pager" id="pager"></div></section>
+  <section class="card wide hide" id="admin-card" style="margin-top:16px"><h2>Admin</h2><p class="sub">Sync state and attribution coverage per repository. Low coverage means agent work without a signal: add trailer or branch rules for your agents.</p><div class="wrap" id="admin"></div></section>
+</main>
+<script>
+(() => {
+  const $ = (s) => document.querySelector(s);
+  const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+  const GROUPS = [["agent", "Agent"], ["assisted", "Assisted"], ["human", "Human"]];
+  const pct = (v) => v == null ? "–" : `${Math.round(v * 100)}%`;
+  const hrs = (v) => v == null ? "–" : `${v.toFixed(1)}h`;
+  const num = (v) => v == null ? "–" : (Number.isInteger(v) ? v.toLocaleString() : v.toFixed(2).replace(/\.?0+$/, ""));
+  const state = { mode: "live", scope: "org", static: null, page: 1, per: 25 };
+
+  try { const t = localStorage.getItem("ay-theme"); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
+  $("#theme").onclick = () => {
+    const t = document.documentElement.dataset.theme === "light" ? "dark" : "light";
+    document.documentElement.dataset.theme = t;
+    try { localStorage.setItem("ay-theme", t); } catch (e) {}
+  };
+
+  async function load() {
+    let res = null;
+    try { res = await fetch(`api/summary?scope=${encodeURIComponent(state.scope)}`); } catch (e) {}
+    if (res && res.status === 401) { location.href = "/auth/login"; return; }
+    if (res && res.ok && (res.headers.get("content-type") || "").includes("json")) {
+      const d = await res.json();
+      render(d.data, d.scopes, d.scope, d.min_sample, d.built_at, d.viewer, "live");
+      return;
+    }
+    if (!state.static) state.static = await (await fetch("data/summary.json")).json();
+    const s = state.static, names = Object.keys(s.scopes || {});
+    const scope = names.includes(state.scope) ? state.scope : "org";
+    render(s.scopes[scope], names, scope, s.min_sample, s.built_at, null, "static");
+  }
+
+  function scopeLabel(s) { return s === "org" ? "Organisation" : s.startsWith("team:") ? `Team ${s.slice(5)}` : `Repository ${s.slice(5)}`; }
+
+  function render(block, scopes, scope, minSample, builtAt, viewer, mode) {
+    state.mode = mode; state.scope = scope;
+    $("#scope").innerHTML = scopes.map((s) => `<option value="${esc(s)}" ${s === scope ? "selected" : ""}>${esc(scopeLabel(s))}</option>`).join("");
+    $("#min").textContent = minSample ?? 10;
+    if (viewer) { $("#who").textContent = viewer.login === "local" ? "" : `Signed in as ${viewer.login}`; $("#logout").classList.toggle("hide", viewer.login === "local"); }
+    const note = $("#note");
+    note.classList.toggle("hide", false);
+    note.textContent = mode === "static"
+      ? `Static copy built ${builtAt}: totals only. Per-PR detail is in the live dashboard.`
+      : `Built ${builtAt}. Times are working hours. Agent PRs are also compared with human PRs of the same repository and size.`;
+    if (!block) { $("#kpis").innerHTML = `<div class="empty">No data yet: run agentyield sync.</div>`; return; }
+    kpis(block); charts(block); table(block);
+    $("#prs-card").classList.toggle("hide", mode !== "live");
+    if (mode === "live") prs();
+    $("#admin-card").classList.toggle("hide", !(viewer && viewer.admin));
+    if (viewer && viewer.admin) admin();
+  }
+
+  function delta(now, was, better, fmt) {
+    if (now == null || was == null) return "";
+    const diff = now - was;
+    if (Math.abs(diff) < 1e-9) return ` <span class="muted">unchanged</span>`;
+    const good = better === "up" ? diff > 0 : diff < 0;
+    return ` <span class="${good ? "up" : "down"}">${diff > 0 ? "▲" : "▼"} ${fmt(Math.abs(diff))}</span>`;
+  }
+
+  function kpis(b) {
+    const g = b.groups, c = b.change;
+    const card = (l, v, s) => `<div class="kpi"><div class="l">${l}</div><div class="v">${v}</div><div class="s">${s}</div></div>`;
+    $("#kpis").innerHTML = [
+      card("Agent share of merged code", pct(g.all.agent_share_of_code),
+        `${num(g.all.agent_lines_merged)} of ${num(g.all.lines_merged)} lines · last 4 weeks ${pct(c.agent_share_of_code.last_4_weeks)}${delta(c.agent_share_of_code.last_4_weeks, c.agent_share_of_code.previous_4_weeks, "up", pct)}`),
+      card("PRs merged", num(g.all.merged),
+        `agent <b>${num(g.agent.merged)}</b> · assisted <b>${num(g.assisted.merged)}</b> · human <b>${num(g.human.merged)}</b>${delta(c.merged.last_4_weeks, c.merged.previous_4_weeks, "up", num)}`),
+      card("Time to merge", `${hrs(g.agent.median_hours_to_merge)}`,
+        `agent median, working hours · human ${hrs(g.human.median_hours_to_merge)}`),
+      card("Merge rate", pct(g.agent.merge_rate), `agent · human ${pct(g.human.merge_rate)} · all ${pct(g.all.merge_rate)}`),
+      card("Back-and-forth", num(g.agent.commits_after_first_review_per_pr),
+        `agent commits after first review, per PR · human ${num(g.human.commits_after_first_review_per_pr)}`),
+      card("Functionality shipped", num(g.all.features_shipped),
+        `features · ${num(g.all.issues_closed)} issues closed · ${pct(g.all.user_facing_share)} user-facing`),
+    ].join("");
+  }
+
+  // ---------- tiny SVG chart kit ----------
+  const W = () => Math.max(320, Math.min(680, ($("#charts").clientWidth || 1200) / (innerWidth > 1100 ? 2 : 1) - 44));
+  function lines(rows, series, opts) {
+    const w = W(), h = 220, padL = 44, padB = 26, top = 12;
+    const vals = rows.flatMap((r) => series.map((s) => s.get(r))).filter((v) => v != null);
+    if (!vals.length) return `<div class="empty">Not enough data yet.</div>`;
+    const max = opts.max ?? (Math.max(...vals) * 1.15 || 1);
+    const x = (i) => padL + (i * (w - padL - 8)) / Math.max(1, rows.length - 1);
+    const y = (v) => top + (h - top - padB) * (1 - v / max);
+    let out = "";
+    for (let k = 0; k <= 4; k++) {
+      const v = (max * k) / 4;
+      out += `<line x1="${padL}" x2="${w}" y1="${y(v)}" y2="${y(v)}" stroke="var(--line)"/><text x="${padL - 6}" y="${y(v) + 4}" text-anchor="end">${opts.fmt(v)}</text>`;
+    }
+    rows.forEach((r, i) => { if (i % Math.ceil(rows.length / 6) === 0) out += `<text x="${x(i)}" y="${h - 6}" text-anchor="middle">${esc(r.week.slice(5))}</text>`; });
+    for (const s of series) {
+      const pts = rows.map((r, i) => [i, s.get(r)]).filter(([, v]) => v != null);
+      if (!pts.length) continue;
+      out += `<polyline fill="none" stroke="${s.color}" stroke-width="2.5" points="${pts.map(([i, v]) => `${x(i)},${y(v)}`).join(" ")}"/>`;
+      out += pts.map(([i, v]) => `<circle cx="${x(i)}" cy="${y(v)}" r="3.5" fill="${s.color}"><title>${esc(rows[i].week)} · ${esc(s.name)}: ${opts.fmt(v)}</title></circle>`).join("");
+    }
+    const legend = `<div class="legend">${series.map((s) => `<span><i style="background:${s.color}"></i>${esc(s.name)}</span>`).join("")}</div>`;
+    return `<svg viewBox="0 0 ${w} ${h}" width="100%" role="img" aria-label="${esc(opts.label)}">${out}</svg>${legend}`;
+  }
+  function stacked(rows) {
+    const w = W(), h = 220, padL = 44, padB = 26, top = 12;
+    const tot = rows.map((r) => GROUPS.reduce((a, [g]) => a + (r[g].merged || 0), 0));
+    const step = Math.max(1, Math.ceil(Math.max(1, ...tot) / 4)), max = step * 4, bw = (w - padL) / rows.length;
+    const y = (v) => top + (h - top - padB) * (1 - v / max);
+    let out = "";
+    for (let k = 0; k <= 4; k++) { const v = step * k; out += `<line x1="${padL}" x2="${w}" y1="${y(v)}" y2="${y(v)}" stroke="var(--line)"/><text x="${padL - 6}" y="${y(v) + 4}" text-anchor="end">${v}</text>`; }
+    rows.forEach((r, i) => {
+      let base = 0;
+      for (const [g, name] of GROUPS) {
+        const v = r[g].merged || 0;
+        if (v) out += `<rect x="${padL + i * bw + bw * 0.15}" y="${y(base + v)}" width="${bw * 0.7}" height="${y(base) - y(base + v)}" fill="var(--${g})"><title>${esc(r.week)} · ${name}: ${v}</title></rect>`;
+        base += v;
+      }
+      if (i % Math.ceil(rows.length / 6) === 0) out += `<text x="${padL + i * bw + bw / 2}" y="${h - 6}" text-anchor="middle">${esc(r.week.slice(5))}</text>`;
+    });
+    return `<svg viewBox="0 0 ${w} ${h}" width="100%" role="img" aria-label="PRs merged by who wrote them">${out}</svg><div class="legend">${GROUPS.map(([g, n]) => `<span><i style="background:var(--${g})"></i>${n}</span>`).join("")}</div>`;
+  }
+  function grouped(items, groups, fmt, label) {
+    const w = W(), rowH = 22 * groups.length + 16, labelW = Math.min(210, w * 0.38), h = items.length * rowH + 8;
+    const max = Math.max(1e-9, ...items.flatMap((it) => groups.map((g) => it.get(g) ?? 0)));
+    let out = "";
+    items.forEach((it, i) => {
+      const y0 = i * rowH + 6;
+      out += `<text x="${labelW - 10}" y="${y0 + (rowH - 16) / 2 + 4}" text-anchor="end">${esc(it.name)}</text>`;
+      groups.forEach((g, j) => {
+        const v = it.get(g), bw = v == null ? 0 : ((w - labelW - 70) * v) / max, y = y0 + j * 22;
+        out += `<rect x="${labelW}" y="${y}" width="${Math.max(bw, v == null ? 0 : 1)}" height="16" rx="3" fill="var(--${g})"><title>${esc(it.name)} · ${g}: ${fmt(v)}</title></rect><text x="${labelW + bw + 6}" y="${y + 13}">${fmt(v)}</text>`;
+      });
+    });
+    return `<svg viewBox="0 0 ${w} ${h}" width="100%" role="img" aria-label="${esc(label)}">${out}</svg><div class="legend">${groups.map((g) => `<span><i style="background:var(--${g})"></i>${g[0].toUpperCase() + g.slice(1)}</span>`).join("")}</div>`;
+  }
+
+  function charts(b) {
+    const g = b.groups, wk = b.weekly || [];
+    const card = (title, sub, body, wide) => `<div class="card ${wide ? "wide" : ""}"><h2>${title}</h2><p class="sub">${sub}</p>${body}</div>`;
+    const m = b.matched || { metrics: {} };
+    const matchedRows = Object.entries(m.metrics || {}).map(([k, v]) => {
+      const f = k.includes("hours") ? hrs : k.includes("rate") ? pct : num;
+      return `<tr><td>${esc(k.replace(/_/g, " "))}</td><td class="n">${f(v.agent)}</td><td class="n">${f(v.human)}</td></tr>`;
+    }).join("");
+    $("#charts").innerHTML = [
+      card("Agent share of merged code", "Rolling 4 weeks. Lines in merged PRs written in agent-attributed commits, without generated, vendored or lock files.",
+        lines(wk, [{ name: "Agent share", color: "var(--agent)", get: (r) => r.all.agent_share_of_code }], { fmt: pct, max: 1, label: "Agent share of merged code by week" })),
+      card("PRs merged by who wrote them", "Rolling 4 weeks.", stacked(wk)),
+      card("Time to merge", "Median working hours from ready for review to merge, rolling 4 weeks.",
+        lines(wk, [{ name: "Agent", color: "var(--agent)", get: (r) => r.agent.median_hours_to_merge }, { name: "Human", color: "var(--human)", get: (r) => r.human.median_hours_to_merge }], { fmt: (v) => `${+v.toFixed(v < 10 ? 1 : 0)}h`, label: "Median hours to merge by week" })),
+      card("Back-and-forth before merge", "How often a PR had to go back after review.",
+        grouped([
+          { name: "Commits after first review", get: (k) => g[k].commits_after_first_review_per_pr },
+          { name: "Review round trips (median)", get: (k) => g[k].median_review_iterations },
+          { name: "Force-pushes per PR", get: (k) => g[k].force_pushes_per_pr },
+        ], ["agent", "assisted", "human"], num, "Back-and-forth by group")),
+      card("Effectiveness", "Did the work get merged, and did it hold up?",
+        grouped([
+          { name: "Merge rate", get: (k) => g[k].merge_rate },
+          { name: "Reverted", get: (k) => g[k].revert_rate },
+          { name: "Needed a follow-up fix", get: (k) => g[k].follow_up_fix_rate },
+          { name: "Human review coverage", get: (k) => g[k].human_review_coverage },
+        ], ["agent", "assisted", "human"], pct, "Effectiveness by group")),
+      card("Agent against human, matched", `Human PRs reweighted to the same repositories and sizes as ${m.agent_prs_matched ?? 0} of ${m.agent_prs ?? 0} agent PRs.`,
+        matchedRows ? `<div class="wrap"><table><thead><tr><th>Metric</th><th class="n">Agent</th><th class="n">Human</th></tr></thead><tbody>${matchedRows}</tbody></table></div>` : `<div class="empty">Not enough comparable work yet.</div>`),
+    ].join("");
+  }
+
+  const ROWS = [
+    ["Agent share of merged code", "agent_share_of_code", pct], ["PRs merged", "merged", num], ["Closed without merging", "closed_unmerged", num],
+    ["Merge rate", "merge_rate", pct], ["Working hours to first review (median)", "median_hours_to_first_review", hrs],
+    ["Working hours to merge (median)", "median_hours_to_merge", hrs], ["Working hours to merge (85th percentile)", "p85_hours_to_merge", hrs],
+    ["Review round trips (median)", "median_review_iterations", num], ["Commits after first review, per PR", "commits_after_first_review_per_pr", num],
+    ["Force-pushes per PR", "force_pushes_per_pr", num], ["Human review coverage", "human_review_coverage", pct],
+    ["Self-merged without review", "self_merge_rate", pct], ["Reverted", "revert_rate", pct], ["Needed a follow-up fix", "follow_up_fix_rate", pct],
+    ["User-facing changes", "user_facing_share", pct], ["Issues closed", "issues_closed", num], ["Features shipped", "features_shipped", num],
+    ["Released", "released", num],
+  ];
+  function table(b) {
+    const g = b.groups;
+    $("#table").innerHTML = `<table><thead><tr><th>Metric</th><th class="n">All</th><th class="n">Agent</th><th class="n">Assisted</th><th class="n">Human</th></tr></thead><tbody>${
+      ROWS.map(([label, key, f]) => `<tr><td>${label}</td>${["all", "agent", "assisted", "human"].map((k) => `<td class="n">${f(g[k][key])}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
+  }
+
+  async function prs() {
+    const res = await fetch(`api/prs?scope=${encodeURIComponent(state.scope)}&page=${state.page}&per_page=${state.per}`);
+    if (!res.ok) return;
+    const d = await res.json();
+    if (!d.total) { $("#prs").innerHTML = `<div class="empty">No pull requests in this scope.</div>`; $("#pager").innerHTML = ""; return; }
+    $("#prs").innerHTML = `<table><thead><tr><th>PR</th><th>Who</th><th class="n">Lines</th><th class="n">Hours to merge</th><th class="n">Round trips</th><th class="n">Commits after review</th><th>Outcome</th><th>Title</th></tr></thead><tbody>${
+      d.rows.map((r) => {
+        const who = `<span class="pill ${esc(r.group)}">${esc(r.group)}</span>${r.agent ? ` <span class="muted">${esc(r.agent)}</span>` : ""}`;
+        const outcome = r.merged ? (r.reverted ? "reverted" : r.follow_up_fix ? "merged, then fixed" : "merged") : r.closed_unmerged ? "closed" : "open";
+        const title = r.restricted ? `<span class="muted">restricted</span>` : esc(r.title);
+        return `<tr><td>${esc(r.repo)}#${r.number}</td><td>${who}</td><td class="n">${num(r.lines)} <span class="muted">${esc(r.size)}</span></td><td class="n">${hrs(r.hours_to_merge)}</td><td class="n">${num(r.review_iterations)}</td><td class="n">${num(r.commits_after_first_review)}</td><td>${outcome}</td><td class="title">${title}</td></tr>`;
+      }).join("")}</tbody></table>`;
+    const pages = Math.max(1, Math.ceil(d.total / d.per_page));
+    const first = (d.page - 1) * d.per_page + 1;
+    $("#pager").innerHTML = `<span>Showing <b>${first}–${Math.min(first + d.per_page - 1, d.total)}</b> of <b>${d.total}</b></span><span class="pages">
+      <button class="btn" data-p="${d.page - 1}" ${d.page <= 1 ? "disabled" : ""}>‹ Prev</button><span class="muted" style="padding:6px">Page ${d.page} of ${pages}</span>
+      <button class="btn" data-p="${d.page + 1}" ${d.page >= pages ? "disabled" : ""}>Next ›</button></span>`;
+  }
+  $("#pager").onclick = (e) => { const b = e.target.closest("button[data-p]"); if (b && !b.disabled) { state.page = +b.dataset.p; prs(); } };
+
+  async function admin() {
+    const res = await fetch("api/admin");
+    if (!res.ok) return;
+    const a = await res.json();
+    $("#admin").innerHTML = `<p class="sub">Last sync ${esc(a.last_sync?.at || "never")} · config ${esc(a.config || "")} · ${a.corrections} corrections${a.hidden.length ? ` · hidden: ${esc(a.hidden.join(", "))}` : ""}</p>
+      <table><thead><tr><th>Repository</th><th>Team</th><th class="n">PRs</th><th class="n">Coverage</th><th class="n">Medium confidence</th><th>History from</th><th>Synced</th></tr></thead><tbody>${
+      a.repos.map((r) => `<tr><td>${esc(r.repo)}${r.restricted ? ` <span class="muted">restricted</span>` : ""}</td><td>${esc(r.team)}</td><td class="n">${num(r.prs)}</td><td class="n">${pct(r.coverage)}</td><td class="n">${num(r.low_confidence)}</td><td>${esc((r.history_from || "").slice(0, 10))}</td><td>${esc((r.synced_at || "").slice(0, 16))}</td></tr>`).join("")}</tbody></table>`;
+  }
+
+  $("#scope").onchange = (e) => { state.scope = e.target.value; state.page = 1; load(); };
+  let rt; addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(load, 250); });
+  load();
+})();
+</script>
+</body>
+</html>

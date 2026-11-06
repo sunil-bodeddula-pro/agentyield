@@ -13,6 +13,8 @@ agentyield attribution [--prs]       who wrote the PRs: agent, assisted or human
 agentyield label set <repo#n> <label>  correct one PR's label; it survives re-syncs (also: clear, list)
 agentyield recompute                 rebuild derived files from stored facts, with no GitHub calls
 agentyield metrics [--scope team:x]  agent share of code, speed, review and reliability, agent against human
+agentyield serve [--every 15m]       the live dashboard, syncing on a timer
+agentyield build [--out site]        the dashboard as static files: totals only, no PR list or titles
 """
 
 from __future__ import annotations
@@ -27,10 +29,10 @@ import sys
 from datetime import UTC, datetime
 from typing import Any
 
-from . import __version__
+from . import __version__, web
 from . import config as cfgmod
 from .derive import SUMMARY, attribution_path, clear_correction, corrections, recompute, set_correction
-from .github import GitHub, GitHubError, token_from
+from .github import AppToken, GitHub, GitHubError, token_from
 from .ops import applied_repos, apply, diff, snapshot, status
 from .schema import json_schema
 from .store import LeaseHeld, Store
@@ -50,7 +52,16 @@ def parse_since(value: str | None) -> str | None:
 
 
 def github_for(cfg: cfgmod.Config | None = None) -> GitHub:
+    """A GitHub App installation when the config names one and its variables are set, else a token or gh."""
     api = cfg.api_url if cfg else os.environ.get("AGENTYIELD_GITHUB_API", "https://api.github.com")
+    auth = (cfg.section("github").get("auth") or {}) if cfg else {}
+    names = [auth.get(k) for k in ("app_id_env", "private_key_env", "installation_id_env")]
+    if all(names) and all(os.environ.get(str(n)) for n in names):
+        app_id, key, inst = (os.environ[str(n)] for n in names)
+        if not key.lstrip().startswith("-----") and os.path.exists(key):  # a path to the .pem file
+            with open(key, encoding="utf-8") as fh:
+                key = fh.read()
+        return GitHub(AppToken(app_id, key, inst, api), api)
     return GitHub(token_from(cfg.token_env if cfg else "GITHUB_TOKEN"), api)
 
 
@@ -334,6 +345,42 @@ def cmd_metrics(args: argparse.Namespace) -> int:
     return 0
 
 
+def parse_every(value: str) -> int:
+    m = re.fullmatch(r"(\d+)([smh]?)", value or "")
+    if not m:
+        raise SystemExit(f"--every takes a number of seconds, or 30m, 2h; not {value!r}")
+    return int(m.group(1)) * {"": 1, "s": 1, "m": 60, "h": 3600}[m.group(2)]
+
+
+def cmd_serve(args: argparse.Namespace) -> int:
+    store, cfg, repos = applied_state(args)
+    dash = dict(cfg.section("outputs").get("dashboard") or {})
+    host = args.host or str(dash.get("host") or "127.0.0.1")
+    port = args.port or int(dash.get("port") or 8780)
+    every = 0 if args.no_sync else parse_every(args.every)
+    if every:
+        print(f"Syncing every {every // 60} minutes; first sync now.", flush=True)
+        cmd_sync(args)
+    web.serve(
+        web.Dashboard.from_config(store, cfg, repos),
+        host,
+        port,
+        sync=lambda: cmd_sync(args),
+        every=every,
+        allow_unauthenticated=args.allow_unauthenticated,
+    )
+    return 0
+
+
+def cmd_build(args: argparse.Namespace) -> int:
+    store, cfg, _ = applied_state(args)
+    out = args.out or str(cfg.section("outputs").get("static_site") or "site")
+    for path in web.build_site(store, out):
+        print(f"wrote {path}")
+    print("The static copy shows totals only: no PR list and no titles.")
+    return 0
+
+
 def cmd_backfill(args: argparse.Namespace) -> int:
     if not args.all and not args.repo:
         raise SystemExit("name a repository (owner/repo) or pass --all")
@@ -456,6 +503,18 @@ def build_parser() -> argparse.ArgumentParser:
     lc = lsub.add_parser("clear")
     lc.add_argument("pr", help="owner/repo#number")
     lsub.add_parser("list")
+    sv = sub.add_parser("serve", help="the live dashboard; syncs on a timer")
+    sv.add_argument("--host", help="address to listen on (default 127.0.0.1)")
+    sv.add_argument("--port", type=int, help="port (default 8780)")
+    sv.add_argument("--every", default="15m", help="sync interval: 15m (default), 1h, or seconds")
+    sv.add_argument("--no-sync", action="store_true", help="serve the store as it is, without syncing")
+    sv.add_argument(
+        "--allow-unauthenticated",
+        action="store_true",
+        help="listen beyond 127.0.0.1 without sign-in (only behind your own access control)",
+    )
+    bd = sub.add_parser("build", help="write the dashboard as static files (totals only)")
+    bd.add_argument("--out", help="folder to write (default outputs.static_site, or ./site)")
     me = sub.add_parser("metrics", help="agent share, speed, review and reliability; agent against human")
     me.add_argument("--scope", help="org (default), team:<name> or repo:<owner/name>")
     me.add_argument("--json", action="store_true")
@@ -484,6 +543,8 @@ def main(argv: list[str] | None = None) -> int:
             "label": cmd_label,
             "attribution": cmd_attribution,
             "metrics": cmd_metrics,
+            "serve": cmd_serve,
+            "build": cmd_build,
         }
         return int(commands[args.cmd](args))
     except cfgmod.ConfigError as exc:

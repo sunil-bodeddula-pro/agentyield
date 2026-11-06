@@ -243,11 +243,15 @@ class Org:
 
 
 class FakeGitHub:
-    """A local HTTP server that answers the REST calls AgentYield makes, from an Org."""
+    """A local HTTP server that answers the REST calls AgentYield makes, from an Org. It also plays GitHub's
+    sign-in endpoints: OAuth codes map to user tokens, and each user token can read only some repositories."""
 
     def __init__(self, org: Org):
         self.org = org
         self.requests: list[str] = []
+        self.users: dict[str, dict[str, Any]] = {}  # user token -> {"login": ..., "repos": {...}}
+        self.codes: dict[str, str] = {}  # OAuth code -> user token
+        self.app_jwts: list[str] = []
         self.rate_remaining = 5000
         handler = self._handler()
         self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), handler)
@@ -265,11 +269,39 @@ class FakeGitHub:
             def log_message(self, format: str, *args: Any) -> None:
                 pass
 
+            def do_POST(self) -> None:
+                fake.requests.append("POST " + self.path)
+                length = int(self.headers.get("Content-Length", "0") or 0)
+                raw = self.rfile.read(length).decode()
+                path = urllib.parse.urlparse(self.path).path
+                if path.startswith("/app/installations/") and path.endswith("/access_tokens"):
+                    auth = self.headers.get("Authorization", "")
+                    if not auth.startswith("Bearer ey"):
+                        return self._send(401, {"message": "A JSON web token could not be decoded"})
+                    fake.app_jwts.append(auth[7:])
+                    return self._send(201, {"token": TOKEN, "expires_at": "2099-01-01T00:00:00Z"})
+                if path == "/login/oauth/access_token":
+                    form = dict(urllib.parse.parse_qsl(raw))
+                    token = fake.codes.pop(form.get("code", ""), "")
+                    if not token or form.get("client_secret") != "client-secret":
+                        return self._send(200, {"error": "bad_verification_code", "error_description": "bad code"})
+                    return self._send(200, {"access_token": token, "token_type": "bearer"})
+                return self._send(404, {"message": "Not Found"})
+
             def do_GET(self) -> None:
                 fake.requests.append(self.path)
-                if self.headers.get("Authorization") != f"Bearer {TOKEN}":
-                    return self._send(401, {"message": "Bad credentials"})
+                auth = self.headers.get("Authorization", "")
+                user = fake.users.get(auth[7:]) if auth.startswith("Bearer ") else None
                 parsed = urllib.parse.urlparse(self.path)
+                if user is not None:  # a signed-in person's token: /user, and repositories they can read
+                    parts = parsed.path.strip("/").split("/")
+                    if parts == ["user"]:
+                        return self._send(200, {"login": user["login"]})
+                    if parts[0] == "repos" and len(parts) == 3 and f"{parts[1]}/{parts[2]}" in user["repos"]:
+                        return self._send(200, {"full_name": f"{parts[1]}/{parts[2]}"})
+                    return self._send(404, {"message": "Not Found"})
+                if auth != f"Bearer {TOKEN}":
+                    return self._send(401, {"message": "Bad credentials"})
                 q = {k: v[0] for k, v in urllib.parse.parse_qs(parsed.query).items()}
                 parts = parsed.path.strip("/").split("/")
                 try:

@@ -208,6 +208,7 @@ SCHEMA = Obj(
         "github": Obj(
             {
                 "api_url": Str("GitHub API URL; change it for GitHub Enterprise Server"),
+                "web_url": Str("GitHub web URL, for sign-in; change it for GitHub Enterprise Server"),
                 "auth": Obj(
                     {
                         "token_env": Str("Environment variable holding a GitHub token"),
@@ -291,7 +292,22 @@ SCHEMA = Obj(
         ),
         "outputs": Obj(
             {
-                "dashboard": Obj({"port": Int(minimum=1, maximum=65535), "base_url": Str()}),
+                "dashboard": Obj(
+                    {
+                        "host": Str("Address to listen on; 127.0.0.1 unless it is behind sign-in"),
+                        "port": Int(minimum=1, maximum=65535),
+                        "base_url": Str("Public URL of the dashboard, for the sign-in callback"),
+                        "auth": Obj(
+                            {
+                                "mode": Enum(("none", "github")),
+                                "client_id_env": Str("Environment variable with the GitHub App's client ID"),
+                                "client_secret_env": Str("Environment variable with the client secret"),
+                                "session_secret_env": Str("Environment variable with a long random secret"),
+                            }
+                        ),
+                        "admins": List(Str("GitHub login allowed to see the admin view")),
+                    }
+                ),
                 "static_site": Str(),
                 "publish": Str("github-pages:owner/repo, gs://… or s3://…"),
                 "digest": Obj({"slack_webhook_env": Str()}),

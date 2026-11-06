@@ -4,7 +4,7 @@
 
 It runs on a laptop or a remote machine, with no database: data lives in JSON files in a folder or a `gs://` / `s3://` bucket.
 
-> **Status: early development.** Batches 1 to 3 of 9 are done: configuration, GitHub sync, the sensitive-data filter, attribution (who wrote each PR) and the metrics engine. The dashboard comes in batch 4. See the [roadmap](docs/ROADMAP.md).
+> **Status: early development.** Batches 1 to 4 of 9 are done: configuration, GitHub sync, the sensitive-data filter, attribution, the metrics engine, and the dashboard with GitHub sign-in. See the [roadmap](docs/ROADMAP.md).
 
 ## What works today
 
@@ -18,6 +18,46 @@ It runs on a laptop or a remote machine, with no database: data lives in JSON fi
 - `agentyield label set owner/repo#42 agent --agent claude-code --note "…"`: an admin correction that always wins and survives re-syncs (`label clear`, `label list`).
 - `agentyield recompute`: rebuilds the derived files from stored facts after a rule change, with no GitHub calls.
 - `agentyield metrics [--scope team:payments | repo:acme/app] [--json]`: the numbers below for agent, assisted and human work side by side, a matched comparison, and the last 4 weeks against the 4 before.
+
+## Dashboard
+
+```bash
+agentyield serve                 # live dashboard on http://127.0.0.1:8780, syncing every 15 minutes
+agentyield build --out site      # static copy: totals only, no PR list or titles
+```
+
+KPI cards (agent share of merged code, PRs merged by who wrote them, time to merge, merge rate, back-and-forth, functionality shipped), weekly trend charts, effectiveness and back-and-forth by group, the matched comparison, every metric in one table, a paginated PR list, and an admin view of sync state and attribution coverage. Choose the organisation, a team or a repository at the top. Dark and light themes; works on a phone.
+
+### Who sees what
+
+| Viewer | Sees |
+| :--- | :--- |
+| Anyone signed in | Organisation and team totals |
+| People who can read a repository on GitHub | That repository's own view and its PRs in the list, re-checked every 15 minutes with their own GitHub token |
+| Logins in `outputs.dashboard.admins` | The admin view |
+| A static copy's readers | Totals only: a static file can't check who is reading it |
+
+### Sign in with GitHub
+
+For a shared server, create a GitHub App (read-only: pull requests, contents, issues, metadata), install it on your organisation, and configure:
+
+```yaml
+github:
+  auth:                                  # the server reads GitHub as the App
+    app_id_env: AGENTYIELD_APP_ID
+    private_key_env: AGENTYIELD_APP_KEY  # the PEM itself, or a path to it
+    installation_id_env: AGENTYIELD_APP_INSTALLATION
+outputs:
+  dashboard:
+    host: 0.0.0.0
+    base_url: https://agentyield.example.com
+    admins: [platform-lead]
+    auth:
+      mode: github                       # people sign in with the same App
+      # reads AGENTYIELD_CLIENT_ID, AGENTYIELD_CLIENT_SECRET and AGENTYIELD_SESSION_SECRET (32+ characters)
+```
+
+Set the App's callback URL to `<base_url>/auth/callback`. Without sign-in, `serve` listens on 127.0.0.1 only and refuses another address.
 
 ## Metrics
 
