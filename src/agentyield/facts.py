@@ -1,0 +1,168 @@
+"""Turn one pull request (its detail and its timeline) into the record AgentYield stores.
+
+Only facts are kept: times, counts, logins, the conventional-commit type of each commit, and which agent rules
+matched. PR descriptions, commit messages, review text and author emails are read here and dropped. The few text
+fields that remain (title, branch, labels) go through the guardrail filter, and are blanked for restricted
+repositories or PRs with a restricted label.
+"""
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass, field
+from typing import Any
+
+from .guardrails import Filter
+
+CONVENTIONAL = re.compile(r"^(\w+)(?:\([^)]*\))?!?:\s")
+
+
+@dataclass
+class AgentRule:
+    bot_logins: list[str] = field(default_factory=list)
+    trailers: list[str] = field(default_factory=list)
+    branch_prefixes: list[str] = field(default_factory=list)
+    labels: list[str] = field(default_factory=list)
+    body_markers: list[str] = field(default_factory=list)
+
+
+# Starting points, overridden or extended by `agents:` in the config.
+DEFAULT_AGENTS: dict[str, AgentRule] = {
+    "claude-code": AgentRule(
+        trailers=["Co-Authored-By: Claude"], branch_prefixes=["claude/"], body_markers=["Generated with Claude Code"]
+    ),
+    "copilot": AgentRule(branch_prefixes=["copilot/"]),
+    "codex": AgentRule(branch_prefixes=["codex/"]),
+}
+
+
+def _commit_time(ev: dict[str, Any]) -> str:
+    return str((ev.get("committer") or {}).get("date") or (ev.get("author") or {}).get("date") or "")
+
+
+def _matches_trailer(message: str, prefix: str) -> bool:
+    p = prefix.lower()
+    return any(line.strip().lower().startswith(p) for line in message.splitlines())
+
+
+def signals_for(pr: dict[str, Any], commits: list[dict[str, Any]], agents: dict[str, AgentRule]) -> dict[str, Any]:
+    """Which agent rules this PR matches. Only agent names are recorded, never the text that matched."""
+    login = (pr.get("user") or {}).get("login", "")
+    branch = (pr.get("head") or {}).get("ref", "") or ""
+    labels = [lb.get("name", "") for lb in pr.get("labels") or []]
+    body = (pr.get("body") or "").lower()
+    out: dict[str, Any] = {"bot_author": None, "branch": None, "labels": [], "body_markers": [], "trailers": {}}
+    for name, rule in agents.items():
+        if login in rule.bot_logins and not out["bot_author"]:
+            out["bot_author"] = name
+        if any(branch.startswith(p) for p in rule.branch_prefixes) and not out["branch"]:
+            out["branch"] = name
+        if any(lb in rule.labels for lb in labels):
+            out["labels"].append(name)
+        if any(m.lower() in body for m in rule.body_markers):
+            out["body_markers"].append(name)
+        hits = sum(1 for c in commits if any(_matches_trailer(c.get("message", ""), t) for t in rule.trailers))
+        if hits:
+            out["trailers"][name] = hits
+    return out
+
+
+def summarize(
+    author: str, commits: list[dict[str, Any]], reviews: list[dict[str, Any]], force_pushes: list[str]
+) -> dict[str, Any]:
+    """The back-and-forth before merge: commits, commits after the first human review, review round trips."""
+    human = sorted((r for r in reviews if r["human"]), key=lambda r: r["at"])
+    first_review = human[0]["at"] if human else ""
+    times = sorted(c["at"] for c in commits if c["at"])
+    after = sum(1 for t in times if first_review and t > first_review)
+    # A round trip: a human review that is followed by new commits before the next review.
+    iterations = 0
+    for i, r in enumerate(human):
+        nxt = human[i + 1]["at"] if i + 1 < len(human) else "9999"
+        if any(r["at"] < t < nxt for t in times):
+            iterations += 1
+    return {
+        "commits": len(commits),
+        "commits_after_first_review": after,
+        "review_iterations": iterations,
+        "changes_requested": sum(1 for r in human if r["state"] == "changes_requested"),
+        "human_reviews": len(human),
+        "force_pushes": len(force_pushes),
+    }
+
+
+def build_record(
+    repo: str,
+    pr: dict[str, Any],
+    timeline: list[dict[str, Any]],
+    flt: Filter,
+    agents: dict[str, AgentRule],
+    repo_restricted: bool,
+) -> dict[str, Any]:
+    author = (pr.get("user") or {}).get("login", "")
+    raw_commits = [ev for ev in timeline if ev.get("event") == "committed"]
+    commits = []
+    for ev in raw_commits:
+        message = ev.get("message") or ""
+        m = CONVENTIONAL.match(message.splitlines()[0] if message else "")
+        commits.append(
+            {
+                "sha": ev.get("sha", ""),
+                "at": _commit_time(ev),
+                "type": m.group(1).lower() if m else "",
+                "message": message,
+            }
+        )
+    reviews = []
+    for ev in timeline:
+        if ev.get("event") == "reviewed" and ev.get("submitted_at"):
+            user = ev.get("user") or {}
+            reviews.append(
+                {
+                    "at": ev["submitted_at"],
+                    "state": str(ev.get("state", "")).lower(),
+                    "reviewer": user.get("login", ""),
+                    "human": user.get("type") != "Bot" and user.get("login") != author,
+                }
+            )
+    force_pushes = [str(ev.get("created_at", "")) for ev in timeline if ev.get("event") == "head_ref_force_pushed"]
+    ready = [str(ev.get("created_at", "")) for ev in timeline if ev.get("event") == "ready_for_review"]
+    signals = signals_for(pr, commits, agents)  # the only use of commit messages and the PR body
+
+    label_names = [lb.get("name", "") for lb in pr.get("labels") or []]
+    restricted = repo_restricted or flt.restricted_label(label_names)
+    title, t_found = ("", []) if restricted else flt.clean(pr.get("title"))
+    branch, b_found = ("", []) if restricted else flt.clean((pr.get("head") or {}).get("ref"))
+    labels, l_found = ([], []) if restricted else flt.clean_all(label_names)
+    merged_at = pr.get("merged_at")
+    state = "merged" if merged_at else str(pr.get("state", ""))
+    human_reviews = sorted(r["at"] for r in reviews if r["human"])
+    return {
+        "repo": repo,
+        "number": pr.get("number"),
+        "state": state,
+        "draft": bool(pr.get("draft")),
+        "restricted": restricted,
+        "title": title,
+        "branch": branch,
+        "labels": labels,
+        "author": author,
+        "author_is_bot": (pr.get("user") or {}).get("type") == "Bot",
+        "merged_by": (pr.get("merged_by") or {}).get("login", ""),
+        "base": (pr.get("base") or {}).get("ref", ""),
+        "created_at": pr.get("created_at"),
+        "ready_at": ready[0] if ready else pr.get("created_at"),
+        "first_review_at": human_reviews[0] if human_reviews else None,
+        "merged_at": merged_at,
+        "closed_at": pr.get("closed_at"),
+        "updated_at": pr.get("updated_at"),
+        "additions": pr.get("additions", 0),
+        "deletions": pr.get("deletions", 0),
+        "changed_files": pr.get("changed_files", 0),
+        "commits": [{"sha": c["sha"], "at": c["at"], "type": c["type"]} for c in commits],
+        "reviews": [{k: r[k] for k in ("at", "state", "reviewer", "human")} for r in reviews],
+        "force_pushes": force_pushes,
+        "signals": signals,
+        "summary": summarize(author, commits, reviews, force_pushes),
+        "redacted": sorted(set(t_found + b_found + l_found)),
+    }

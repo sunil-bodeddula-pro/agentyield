@@ -1,0 +1,63 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agentyield"
+dynamic = ["version"]
+description = "How much code and functionality AI agents ship, how well it holds up, and how fast: a self-hosted team dashboard."
+readme = "README.md"
+requires-python = ">=3.12"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+authors = [{ name = "Sunil Bodeddula" }]
+keywords = ["ai-agents", "engineering-metrics", "pull-requests", "dora", "code-quality", "github"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Quality Assurance",
+]
+dependencies = ["PyYAML>=6.0"]
+
+[project.optional-dependencies]
+gcs = ["google-cloud-storage>=2.10"]
+s3 = ["boto3>=1.28"]
+dev = ["ruff>=0.17", "mypy>=2.4", "types-PyYAML"]
+
+[project.urls]
+Homepage = "https://github.com/sunil-bodeddula-pro/agentyield"
+
+[project.scripts]
+agentyield = "agentyield.cli:main"
+
+[tool.setuptools.dynamic]
+version = { attr = "agentyield.__version__" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "B", "UP", "SIM", "C4", "RUF", "PL"]
+ignore = ["PLR0911", "PLR0912", "PLR0913", "PLR0915", "PLR0917", "PLR2004", "RUF001", "RUF002", "RUF003", "C408"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["PLC0415", "E402", "N803", "S"]
+
+[tool.mypy]
+python_version = "3.12"
+files = ["src/agentyield"]
+strict = true
+warn_unreachable = true
+
+[[tool.mypy.overrides]]
+module = ["google.*", "boto3.*", "botocore.*"]
+ignore_missing_imports = true
