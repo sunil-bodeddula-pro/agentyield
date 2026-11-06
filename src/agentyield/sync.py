@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from .attribution import DEFAULT_EXCLUDED_FILES, excluded_lines, needs_line_counts
 from .config import Config, RepoSpec
 from .facts import AgentRule, build_record
 from .github import GitHub, GitHubError
@@ -93,6 +94,7 @@ class Syncer:
         detail = self.gh.pull(spec.name, number)
         timeline = self.gh.timeline(spec.name, number)
         record = build_record(spec.name, detail, timeline, self.flt, self.agents, spec.restricted)
+        self._line_counts(spec, record)
         record["team"] = spec.team
         record["fetched_at"] = iso(datetime.now(UTC))
         record["config"] = self.cfg.hash
@@ -100,6 +102,25 @@ class Syncer:
             res.redactions[kind] = res.redactions.get(kind, 0) + 1
         self.store.write(self.store.pr_path(spec.name, number), record)
         res.fetched += 1
+
+    def _line_counts(self, spec: RepoSpec, record: dict[str, Any]) -> None:
+        """Changed lines per commit, for PRs mixing agent and human commits. Counts already stored for a commit
+        are reused, so a PR is never counted twice. Generated, vendored and lock files don't count."""
+        if not needs_line_counts(record, self.agents):
+            return
+        old = self.store.read(self.store.pr_path(spec.name, record["number"]), {}) or {}
+        known = {c["sha"]: c["lines"] for c in old.get("commits") or [] if isinstance(c.get("lines"), int)}
+        patterns = DEFAULT_EXCLUDED_FILES + spec.exclude_paths
+        for c in record["commits"]:
+            if c["sha"] in known:
+                c["lines"] = known[c["sha"]]
+                continue
+            files = self.gh.commit_files(spec.name, c["sha"])
+            c["lines"] = sum(
+                int(f.get("additions", 0)) + int(f.get("deletions", 0))
+                for f in files
+                if not excluded_lines(str(f.get("filename", "")), patterns)
+            )
 
     def refilter(self, repos: dict[str, RepoSpec]) -> int:
         """Apply the current guardrails to stored PRs: blank newly restricted ones, re-clean the rest.

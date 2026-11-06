@@ -16,6 +16,7 @@ from typing import Any
 import yaml
 
 from .config import Config, RepoSpec
+from .derive import attribution_path, recompute
 from .store import Store
 from .sync import DEFAULT_BACKFILL_DAYS, RepoResult, Syncer, days_ago, iso
 
@@ -119,6 +120,7 @@ def apply(
             "repos": snapshot(resolved),
         }
         store.save_manifest(manifest)
+        recompute(store, cfg, resolved)
         return changes, results
     finally:
         store.release()
@@ -148,8 +150,10 @@ def status(store: Store) -> dict[str, Any]:
     repos = []
     for key, r in sorted((applied.get("repos") or {}).items()):
         cursor = store.read(f"{store.repo_dir(r['name'])}/cursor.json", {}) or {}
+        attr = (store.read(attribution_path(r["name"]), {}) or {}).get("summary") or {}
         repos.append(
             {
+                "attribution": attr,
                 "repo": r["name"],
                 "team": r.get("team", ""),
                 "via": r.get("via", ""),

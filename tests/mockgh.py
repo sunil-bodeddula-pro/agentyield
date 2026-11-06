@@ -32,6 +32,7 @@ PLANTED = {
     "commit": "COMMIT-MESSAGE-MUST-NOT-BE-STORED",
     "restricted_title": "Patch auth bypass CVE-2026-1234 before disclosure",
     "security_label_title": "Rotate leaked signing key for payments",
+    "human_coauthor": "Mallory Example",
 }
 
 
@@ -48,6 +49,7 @@ class Org:
         self.timelines: dict[tuple[str, int], list[dict[str, Any]]] = {}
         self.properties: dict[str, dict[str, Any]] = {}
         self.files: dict[tuple[str, str], str] = {}
+        self.commit_files: dict[str, list[dict[str, Any]]] = {}  # by sha
         for repo in ("acme/checkout-service", "acme/web-dashboard", "acme/security-patches", "acme/untracked"):
             self.pulls[repo] = {}
         self._build()
@@ -153,6 +155,16 @@ class Org:
                 self.review(d + 5 * h, "APPROVED"),
             ],
         )
+        # Lines per commit for PR 1, which mixes agent and human commits: agent 30 + 10, human 20 -> 67% agent.
+        # The lock file in the first commit must not count.
+        self.commit_files = {
+            "a" * 40: [
+                {"filename": "src/keys.py", "additions": 25, "deletions": 5},
+                {"filename": "package-lock.json", "additions": 900, "deletions": 0},
+            ],
+            "b" * 40: [{"filename": "tests/test_keys.py", "additions": 10, "deletions": 0}],
+            "c" * 40: [{"filename": "src/replay.py", "additions": 18, "deletions": 2}],
+        }
         # PR 2: human, secrets in title and branch, deny term.
         self.add_pr(
             cs,
@@ -162,7 +174,11 @@ class Org:
             created=d + 24 * h,
             merged=d + 30 * h,
             events=[
-                self.commit(d + 25 * h, f"chore: config {PLANTED['host']}", "d" * 40),
+                self.commit(
+                    d + 25 * h,
+                    f"chore: config {PLANTED['host']}\n\nCo-Authored-By: {PLANTED['human_coauthor']} <m@example.org>",
+                    "d" * 40,
+                ),
                 self.review(d + 26 * h, "APPROVED"),
             ],
         )
@@ -318,6 +334,9 @@ class FakeGitHub:
             return 200, chunk, {"ETag": tag, **extra}
         if rest[0] == "pulls" and len(rest) == 2:
             return 200, org.pulls[repo][int(rest[1])], {}
+        if rest[0] == "commits" and len(rest) == 2:
+            files = org.commit_files.get(rest[1], [{"filename": "src/app.py", "additions": 10, "deletions": 0}])
+            return 200, {"sha": rest[1], "files": files}, {}
         if rest[0] == "issues" and rest[2:] == ["timeline"]:
             chunk, extra = self._page(org.timelines[(repo, int(rest[1]))], q, path)
             return 200, chunk, extra

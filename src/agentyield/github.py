@@ -129,5 +129,16 @@ class GitHub:
     def pull(self, repo: str, number: int) -> dict[str, Any]:
         return dict(self.get(f"/repos/{repo}/pulls/{number}").data)
 
+    def commit_files(self, repo: str, sha: str) -> list[dict[str, Any]]:
+        """Changed files of one commit, with additions and deletions. Only used for PRs that mix agent and
+        human commits, to measure the agent's share in lines."""
+        files: list[dict[str, Any]] = []
+        url: str | None = f"/repos/{repo}/commits/{sha}"
+        while url:
+            resp = self.get(url)
+            files.extend((resp.data or {}).get("files") or [])
+            url = resp.next_url
+        return files
+
     def timeline(self, repo: str, number: int) -> list[dict[str, Any]]:
         return list(self.paginate(f"/repos/{repo}/issues/{number}/timeline", {"per_page": 100}))

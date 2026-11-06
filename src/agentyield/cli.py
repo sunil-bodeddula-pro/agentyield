@@ -9,6 +9,9 @@ agentyield config schema             print the JSON Schema for editors
 agentyield sync                      fetch what changed since the last sync
 agentyield backfill <owner/repo>     fetch older history (--since 2025-01-01 or 365d); --all for every repository
 agentyield status                    what is tracked, how far back, when it last synced
+agentyield attribution [--prs]       who wrote the PRs: agent, assisted or human, with the evidence
+agentyield label set <repo#n> <label>  correct one PR's label; it survives re-syncs (also: clear, list)
+agentyield recompute                 rebuild derived files from stored facts, with no GitHub calls
 """
 
 from __future__ import annotations
@@ -25,6 +28,7 @@ from typing import Any
 
 from . import __version__
 from . import config as cfgmod
+from .derive import attribution_path, clear_correction, corrections, recompute, set_correction
 from .github import GitHub, GitHubError, token_from
 from .ops import applied_repos, apply, diff, snapshot, status
 from .schema import json_schema
@@ -178,6 +182,7 @@ def cmd_sync(args: argparse.Namespace, since: str | None = None, only: list[str]
         manifest = store.manifest()
         manifest["last_sync"] = {"at": iso(datetime.now(UTC)), "fetched": out["fetched"], "errors": out["errors"]}
         store.save_manifest(manifest)
+        recompute(store, cfg, repos)
     finally:
         store.release()
     for r in out["repos"]:
@@ -185,6 +190,84 @@ def cmd_sync(args: argparse.Namespace, since: str | None = None, only: list[str]
         print(f"  {r['repo']}: {state}" + (f" (error: {r['error']})" if r["error"] else ""))
     print(f"Synced in {out['seconds']}s. GitHub requests: {out['requests']}, rate limit left: {out['rate_remaining']}")
     return 1 if out["errors"] else 0
+
+
+def applied_state(args: argparse.Namespace) -> tuple[Store, cfgmod.Config, dict[str, cfgmod.RepoSpec]]:
+    current = load_config(args.config)
+    store = Store(current.store_uri)
+    return store, _applied_config(store, current), applied_repos(store.manifest())
+
+
+def cmd_recompute(args: argparse.Namespace) -> int:
+    store, cfg, repos = applied_state(args)
+    summary = recompute(store, cfg, repos)
+    for repo, info in sorted(summary.items()):
+        print(f"  {repo}: {info['prs']} PRs, attribution coverage {info['coverage']:.0%}")
+    print("Rebuilt the derived files from stored facts (no GitHub calls).")
+    return 0
+
+
+PR_KEY = re.compile(r"^([\w.-]+/[\w.-]+)#(\d+)$")
+
+
+def cmd_label(args: argparse.Namespace) -> int:
+    store, cfg, repos = applied_state(args)
+    if args.action == "list":
+        items = corrections(store)
+        for key, c in sorted(items.items()):
+            print(f"  {key}: {c['label']}{' (' + c['agent'] + ')' if c.get('agent') else ''}  {c.get('note', '')}")
+        if not items:
+            print("No corrections.")
+        return 0
+    m = PR_KEY.match(args.pr or "")
+    if not m:
+        raise SystemExit("name the PR as owner/repo#number, for example acme/checkout-service#42")
+    repo_key = m.group(1).lower()
+    if repo_key not in repos:
+        raise SystemExit(f"{m.group(1)} isn't tracked by the applied config")
+    key = f"{repos[repo_key].name}#{m.group(2)}"
+    if args.action == "set":
+        set_correction(
+            store, cfg.filter(), key, args.label, args.agent or "", args.note or "", os.environ.get("USER", "")
+        )
+        print(f"{key} is now labelled {args.label}; it stays that way through re-syncs.")
+    elif clear_correction(store, key):
+        print(f"Removed the correction for {key}.")
+    else:
+        print(f"No correction for {key}.")
+    recompute(store, cfg, {repo_key: repos[repo_key]})
+    return 0
+
+
+def cmd_attribution(args: argparse.Namespace) -> int:
+    store, _, repos = applied_state(args)
+    out: dict[str, Any] = {}
+    for key, spec in sorted(repos.items()):
+        if args.repo and key != args.repo.lower():
+            continue
+        out[spec.name] = store.read(attribution_path(spec.name), {}) or {}
+    if args.json:
+        print(json.dumps(out, indent=1))
+        return 0
+    for repo, data in out.items():
+        info = data.get("summary") or {}
+        if not info:
+            print(f"{repo}: nothing computed yet (run `agentyield sync`)")
+            continue
+        lb = info["labels"]
+        agents = ", ".join(f"{a} {n}" for a, n in info["agents"].items()) or "none"
+        print(
+            f"{repo}: {info['prs']} PRs | agent {lb['agent']}, assisted {lb['assisted']}, human {lb['human']}, "
+            f"excluded {lb['excluded']} | coverage {info['coverage']:.0%} | agents: {agents}"
+        )
+        if args.prs:
+            for num, p in sorted(data["prs"].items(), key=lambda kv: int(kv[0])):
+                share = "" if p["share"] is None else f" {p['share']:.0%}"
+                print(
+                    f"    #{num:<6} {p['label']:<9} {p['agent'] or '':<12}{share:>5}  {p['confidence']:<7} "
+                    f"{'; '.join(p['evidence'])}"
+                )
+    return 0
 
 
 def cmd_backfill(args: argparse.Namespace) -> int:
@@ -210,6 +293,13 @@ def cmd_status(args: argparse.Namespace) -> int:
             f"  {r['repo']:<40} {r['prs']:>5} PRs  history from {r['history_from'][:10] or '-'}  "
             f"synced {r['synced_at'][:16] or 'never'}{'  restricted' if r['restricted'] else ''}"
         )
+        a = r.get("attribution") or {}
+        if a:
+            lb = a["labels"]
+            print(
+                f"  {'':<40} agent {lb['agent']}, assisted {lb['assisted']}, human {lb['human']}, "
+                f"excluded {lb['excluded']}; attribution coverage {a['coverage']:.0%}"
+            )
     if s["hidden"]:
         print(f"Hidden (removed, data kept): {', '.join(s['hidden'])}")
     if s["lease"]:
@@ -291,6 +381,21 @@ def build_parser() -> argparse.ArgumentParser:
     b.add_argument("--since", help="a date (2025-01-31) or Nd (365d); default 180d")
     s = sub.add_parser("status", help="what is tracked and when it last synced")
     s.add_argument("--json", action="store_true")
+    sub.add_parser("recompute", help="rebuild derived files from stored facts (no GitHub calls)")
+    lab = sub.add_parser("label", help="correct who wrote a PR: set, clear, list")
+    lsub = lab.add_subparsers(dest="action", required=True)
+    ls = lsub.add_parser("set")
+    ls.add_argument("pr", help="owner/repo#number")
+    ls.add_argument("label", choices=["agent", "assisted", "human", "excluded"])
+    ls.add_argument("--agent", help="which agent, for agent or assisted")
+    ls.add_argument("--note", help="why; filtered like any stored text")
+    lc = lsub.add_parser("clear")
+    lc.add_argument("pr", help="owner/repo#number")
+    lsub.add_parser("list")
+    at = sub.add_parser("attribution", help="who wrote the PRs: agent, assisted, human")
+    at.add_argument("--repo", help="only this owner/name")
+    at.add_argument("--prs", action="store_true", help="list every PR with its label and evidence")
+    at.add_argument("--json", action="store_true")
     return p
 
 
@@ -303,7 +408,16 @@ def main(argv: list[str] | None = None) -> int:
                 print(json.dumps(json_schema(), indent=2))
                 return 0
             return int(handlers[args.action](args))
-        return int({"init": cmd_init, "sync": cmd_sync, "backfill": cmd_backfill, "status": cmd_status}[args.cmd](args))
+        commands: dict[str, Any] = {
+            "init": cmd_init,
+            "sync": cmd_sync,
+            "backfill": cmd_backfill,
+            "status": cmd_status,
+            "recompute": cmd_recompute,
+            "label": cmd_label,
+            "attribution": cmd_attribution,
+        }
+        return int(commands[args.cmd](args))
     except cfgmod.ConfigError as exc:
         print(exc, file=sys.stderr)
         return 1

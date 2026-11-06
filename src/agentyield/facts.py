@@ -15,6 +15,8 @@ from typing import Any
 from .guardrails import Filter
 
 CONVENTIONAL = re.compile(r"^(\w+)(?:\([^)]*\))?!?:\s")
+COAUTHOR = re.compile(r"^\s*co-authored-by:\s*(.*?)\s*<([^>]*)>\s*$", re.I | re.M)
+BOT_EMAIL = re.compile(r"(\[bot\]@users\.noreply\.github\.com|^no-?reply@)", re.I)
 
 
 @dataclass
@@ -34,6 +36,39 @@ DEFAULT_AGENTS: dict[str, AgentRule] = {
     "copilot": AgentRule(branch_prefixes=["copilot/"]),
     "codex": AgentRule(branch_prefixes=["codex/"]),
 }
+
+
+def trailer_names(rule: AgentRule) -> list[str]:
+    """'Co-Authored-By: Claude' -> 'claude': the co-author name a rule looks for."""
+    out = []
+    for t in rule.trailers:
+        name = t.split(":", 1)[1] if t.lower().startswith("co-authored-by:") else t
+        if name.strip():
+            out.append(name.strip().lower())
+    return out
+
+
+def is_agent_identity(name: str, email: str, agents: dict[str, AgentRule]) -> bool:
+    """A co-author or commit author that is a tool, not a person. Only these names are ever stored."""
+    low = name.lower()
+    if BOT_EMAIL.search(email) or "[bot]" in low:
+        return True
+    return any(low.startswith(n) for rule in agents.values() for n in trailer_names(rule))
+
+
+def commit_identities(ev: dict[str, Any], agents: dict[str, AgentRule]) -> dict[str, Any]:
+    """Agent co-authors and bot authors of one commit. People are kept as a count, never by name or email."""
+    message = ev.get("message") or ""
+    agents_found, humans = [], 0
+    for name, email in COAUTHOR.findall(message):
+        if is_agent_identity(name, email, agents):
+            agents_found.append(name.strip())
+        else:
+            humans += 1
+    author = ev.get("author") or {}
+    a_name, a_email = str(author.get("name") or ""), str(author.get("email") or "")
+    author_bot = a_name if is_agent_identity(a_name, a_email, agents) else ""
+    return {"coauthors": sorted(set(agents_found)), "human_coauthors": humans, "author_bot": author_bot}
 
 
 def _commit_time(ev: dict[str, Any]) -> str:
@@ -111,8 +146,12 @@ def build_record(
                 "at": _commit_time(ev),
                 "type": m.group(1).lower() if m else "",
                 "message": message,
+                **commit_identities(ev, agents),
             }
         )
+    for c in commits:  # tool names only, but they are stored text, so they are filtered too
+        c["coauthors"] = flt.clean_all(c["coauthors"])[0]
+        c["author_bot"] = flt.clean(c["author_bot"])[0]
     reviews = []
     for ev in timeline:
         if ev.get("event") == "reviewed" and ev.get("submitted_at"):
@@ -159,7 +198,9 @@ def build_record(
         "additions": pr.get("additions", 0),
         "deletions": pr.get("deletions", 0),
         "changed_files": pr.get("changed_files", 0),
-        "commits": [{"sha": c["sha"], "at": c["at"], "type": c["type"]} for c in commits],
+        "commits": [
+            {k: c[k] for k in ("sha", "at", "type", "coauthors", "human_coauthors", "author_bot")} for c in commits
+        ],
         "reviews": [{k: r[k] for k in ("at", "state", "reviewer", "human")} for r in reviews],
         "force_pushes": force_pushes,
         "signals": signals,

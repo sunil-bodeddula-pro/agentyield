@@ -23,7 +23,8 @@ Run all of them before saying a change is done, and report the results honestly.
 | `src/agentyield/github.py` | Read-only GitHub REST client on the standard library |
 | `src/agentyield/guardrails.py` | The sensitive-data filter |
 | `src/agentyield/facts.py` | One PR and its timeline -> the stored record |
-| `src/agentyield/sync.py` | Incremental sync and backfill |
+| `src/agentyield/sync.py` | Incremental sync and backfill; per-commit line counts for mixed PRs |
+| `src/agentyield/attribution.py`, `derive.py` | Agent, assisted or human per PR; the derived layer and admin corrections |
 | `src/agentyield/ops.py` | `config diff` / `apply`, status |
 | `src/agentyield/store.py` | JSON file store and its folder, GCS and S3 backends; the writer lease |
 | `tests/mockgh.py` | Fixture organisation with planted secrets, and a fake GitHub server |

@@ -4,7 +4,7 @@
 
 It runs on a laptop or a remote machine, with no database: data lives in JSON files in a folder or a `gs://` / `s3://` bucket.
 
-> **Status: early development.** Batch 1 of 9 is done: configuration, GitHub sync and the sensitive-data filter. Metrics and the dashboard come in batches 3 and 4. See the [roadmap](docs/ROADMAP.md).
+> **Status: early development.** Batches 1 and 2 of 9 are done: configuration, GitHub sync, the sensitive-data filter, and attribution (who wrote each PR). Metrics and the dashboard come in batches 3 and 4. See the [roadmap](docs/ROADMAP.md).
 
 ## What works today
 
@@ -14,6 +14,20 @@ It runs on a laptop or a remote machine, with no database: data lives in JSON fi
 - `agentyield backfill <owner/repo> --since 2025-01-01`: older history on demand.
 - `agentyield status`: what is tracked, how far back, when it last synced.
 - One JSON file per PR: times, sizes, commits (with their conventional-commit type), reviews, force-pushes, the back-and-forth before merge, and which agent rules matched.
+- `agentyield attribution [--prs]`: every PR labelled **agent**, **assisted**, **human** or **excluded** (dependency bots), with the agent, its share of the changed lines, a confidence and the evidence.
+- `agentyield label set owner/repo#42 agent --agent claude-code --note "…"`: an admin correction that always wins and survives re-syncs (`label clear`, `label list`).
+- `agentyield recompute`: rebuilds the derived files from stored facts after a rule change, with no GitHub calls.
+
+## How attribution works
+
+| Signal | Example | Confidence |
+| :--- | :--- | :--- |
+| PR opened by an agent's bot account | `bot_logins` in the config | High |
+| Commits with an agent co-author or bot author | `Co-Authored-By: Claude <noreply@anthropic.com>` | High, per commit |
+| Agent branch prefix | `claude/`, `copilot/`, `codex/` | Medium |
+| Agent label or PR description marker | `ai-agent`, "Generated with Claude Code" | Medium |
+
+A PR is **agent** when an agent opened it, or wrote at least `metrics.agent_share_threshold` (default 50%) of its changed lines; **assisted** when some commits carry an agent but less than the threshold. The share is measured in lines for PRs that mix agent and human commits (generated, vendored and lock files don't count), and by commit count when line counts are missing. `status` shows attribution coverage: the share of PRs with any agent signal.
 
 ## Quick start (your own repositories)
 
@@ -58,7 +72,7 @@ guardrails:
 
 Nothing is stored before it passes the filter, and most text is never stored at all.
 
-- **Never stored:** PR descriptions, commit messages, review text, author emails, code.
+- **Never stored:** PR descriptions, commit messages, review text, author emails, code, and the names of human co-authors (they are counted, not named). Only tool identities, such as an agent's co-author name or a bot account, are kept.
 - **Filtered:** titles, branch names and labels lose secrets (tokens, keys, credentials in URLs, high-entropy strings), personal data (emails, phone numbers, IPs, card numbers, home-folder paths, internal hostnames) and your deny terms.
 - **Restricted:** repositories marked `restricted`, and PRs with a restricted label, keep numbers only.
 - **Fails closed:** if the filter errors, the text is dropped.
