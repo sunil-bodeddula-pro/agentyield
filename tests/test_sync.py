@@ -61,11 +61,12 @@ class ApplyAndSyncTest(OrgCase):
 
     def test_second_sync_is_free_and_updates_are_picked_up(self) -> None:
         self.run_cli("config", "apply", "--yes")
-        before = len(self.gh.requests)
+        before, rate = len(self.gh.requests), self.gh.rate_remaining
         code, out = self.run_cli("sync")
         self.assertEqual(code, 0, out)
         self.assertEqual(out.count("unchanged"), 3)
-        self.assertEqual(len(self.gh.requests) - before, 3)  # one conditional list request per repository
+        self.assertEqual(len(self.gh.requests) - before, 6)  # conditional PR-list and release requests per repo
+        self.assertEqual(self.gh.rate_remaining, rate)  # all answered 304: no rate limit used
         self.org.touch("acme/checkout-service", 4, minutes=5)
         self.org.pulls["acme/checkout-service"][4]["title"] = "docs: access guide"
         _, out = self.run_cli("sync")

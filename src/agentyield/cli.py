@@ -12,6 +12,7 @@ agentyield status                    what is tracked, how far back, when it last
 agentyield attribution [--prs]       who wrote the PRs: agent, assisted or human, with the evidence
 agentyield label set <repo#n> <label>  correct one PR's label; it survives re-syncs (also: clear, list)
 agentyield recompute                 rebuild derived files from stored facts, with no GitHub calls
+agentyield metrics [--scope team:x]  agent share of code, speed, review and reliability, agent against human
 """
 
 from __future__ import annotations
@@ -28,7 +29,7 @@ from typing import Any
 
 from . import __version__
 from . import config as cfgmod
-from .derive import attribution_path, clear_correction, corrections, recompute, set_correction
+from .derive import SUMMARY, attribution_path, clear_correction, corrections, recompute, set_correction
 from .github import GitHub, GitHubError, token_from
 from .ops import applied_repos, apply, diff, snapshot, status
 from .schema import json_schema
@@ -270,6 +271,69 @@ def cmd_attribution(args: argparse.Namespace) -> int:
     return 0
 
 
+LINES = [
+    ("Agent share of merged code", "agent_share_of_code", "pct"),
+    ("PRs merged", "merged", "int"),
+    ("Merge rate", "merge_rate", "pct"),
+    ("Median working hours to first review", "median_hours_to_first_review", "h"),
+    ("Median working hours to merge", "median_hours_to_merge", "h"),
+    ("Review round trips (median)", "median_review_iterations", "num"),
+    ("Commits after first review, per PR", "commits_after_first_review_per_pr", "num"),
+    ("Force-pushes per PR", "force_pushes_per_pr", "num"),
+    ("Human review coverage", "human_review_coverage", "pct"),
+    ("Self-merged without review", "self_merge_rate", "pct"),
+    ("Reverted within the window", "revert_rate", "pct"),
+    ("Needed a follow-up fix", "follow_up_fix_rate", "pct"),
+    ("User-facing changes", "user_facing_share", "pct"),
+    ("Issues closed", "issues_closed", "int"),
+    ("Features shipped", "features_shipped", "int"),
+]
+
+
+def fmt(value: Any, kind: str) -> str:
+    if value is None:
+        return "-"
+    return {"pct": f"{value:.0%}", "h": f"{value:.1f}h", "num": f"{value:.2f}".rstrip("0").rstrip(".")}.get(
+        kind, f"{value:,}"
+    )
+
+
+def cmd_metrics(args: argparse.Namespace) -> int:
+    store, _, _ = applied_state(args)
+    data = store.read(SUMMARY)
+    if not data:
+        raise SystemExit("No metrics yet: run `agentyield sync` or `agentyield recompute`.")
+    scope = args.scope or "org"
+    block = data["scopes"].get(scope)
+    if block is None:
+        raise SystemExit(f"no scope {scope!r}; choose from: {', '.join(data['scopes'])}")
+    if args.json:
+        print(json.dumps(block, indent=1))
+        return 0
+    g = block["groups"]
+    print(f"{scope}  (built {data['built_at']}; '-' means fewer than {data['min_sample']} PRs to go on)")
+    print(f"  {'':<40}{'All':>9}{'Agent':>9}{'Assisted':>10}{'Human':>9}")
+    for label, key, kind in LINES:
+        cells = "".join(
+            f"{fmt(g[grp][key], kind):>{w}}" for grp, w in (("all", 9), ("agent", 9), ("assisted", 10), ("human", 9))
+        )
+        print(f"  {label:<40}{cells}")
+    m = block["matched"]
+    if m["metrics"]:
+        print(f"Matched on repository and PR size ({m['agent_prs_matched']} of {m['agent_prs']} agent PRs):")
+        for key, v in m["metrics"].items():
+            kind = "h" if "hours" in key else "pct" if "rate" in key else "num"
+            print(f"  {key.replace('_', ' '):<40} agent {fmt(v['agent'], kind):>7}   human {fmt(v['human'], kind):>7}")
+    c = block["change"]
+    print("Last 4 weeks against the 4 before:")
+    for key, v in c.items():
+        kind = "pct" if key in ("agent_share_of_code", "merge_rate") else "h" if "hours" in key else "int"
+        print(
+            f"  {key.replace('_', ' '):<40} {fmt(v['last_4_weeks'], kind):>8}  (was {fmt(v['previous_4_weeks'], kind)})"
+        )
+    return 0
+
+
 def cmd_backfill(args: argparse.Namespace) -> int:
     if not args.all and not args.repo:
         raise SystemExit("name a repository (owner/repo) or pass --all")
@@ -392,6 +456,9 @@ def build_parser() -> argparse.ArgumentParser:
     lc = lsub.add_parser("clear")
     lc.add_argument("pr", help="owner/repo#number")
     lsub.add_parser("list")
+    me = sub.add_parser("metrics", help="agent share, speed, review and reliability; agent against human")
+    me.add_argument("--scope", help="org (default), team:<name> or repo:<owner/name>")
+    me.add_argument("--json", action="store_true")
     at = sub.add_parser("attribution", help="who wrote the PRs: agent, assisted, human")
     at.add_argument("--repo", help="only this owner/name")
     at.add_argument("--prs", action="store_true", help="list every PR with its label and evidence")
@@ -416,6 +483,7 @@ def main(argv: list[str] | None = None) -> int:
             "recompute": cmd_recompute,
             "label": cmd_label,
             "attribution": cmd_attribution,
+            "metrics": cmd_metrics,
         }
         return int(commands[args.cmd](args))
     except cfgmod.ConfigError as exc:

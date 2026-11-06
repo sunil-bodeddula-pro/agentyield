@@ -2,6 +2,8 @@
 sync and config apply) with no GitHub calls.
 
     derived/attribution/<owner>/<repo>.json   per PR: label, agent, agent share, confidence, evidence
+    derived/metrics/prs/<owner>/<repo>.json   per PR: timings, size, back-and-forth, reverts, functionality
+    derived/metrics/summary.json              organisation, team and repository rollups, matched, weekly
     corrections.json                          admin corrections, keyed "owner/repo#number"; they always win
 """
 
@@ -14,9 +16,53 @@ from typing import Any
 from .attribution import DEFAULT_IGNORED, DEFAULT_THRESHOLD, LABELS, attribute
 from .config import Config, RepoSpec
 from .guardrails import Filter
+from .metrics import Settings, pr_metrics, rollup
 from .store import Store
 
 CORRECTIONS = "corrections.json"
+
+
+def metrics_path(repo: str) -> str:
+    return f"derived/metrics/prs/{repo}.json"
+
+
+SUMMARY = "derived/metrics/summary.json"
+
+
+def metric_settings(cfg: Config) -> Settings:
+    return Settings.from_config(cfg.section("metrics"), cfg.section("functionality"))
+
+
+def write_pr_metrics(store: Store, cfg: Config, spec: RepoSpec, attributions: dict[str, Any]) -> None:
+    s = metric_settings(cfg)
+    base = store.repo_dir(spec.name)
+    facts = {int(r["number"]): r for r in (store.read(rel) for rel in store.pr_files(spec.name)) if r}
+    issues = {int(i["number"]): i for i in (store.read(rel) for rel in store.files(f"{base}/issues/")) if i}
+    releases = (store.read(f"{base}/releases.json", {}) or {}).get("releases") or []
+    rows = [
+        pr_metrics(rec, attributions[str(n)], facts, issues, releases, s)
+        for n, rec in sorted(facts.items())
+        if str(n) in attributions
+    ]
+    store.write(metrics_path(spec.name), {"repo": spec.name, "config": cfg.hash, "prs": rows})
+
+
+def write_rollup(store: Store, cfg: Config, now: datetime | None = None) -> dict[str, Any]:
+    """Organisation, team and repository rollups over every applied repository (hidden ones excluded)."""
+    applied = (store.manifest().get("applied") or {}).get("repos") or {}
+    rows: list[dict[str, Any]] = []
+    for r in applied.values():
+        rows.extend((store.read(metrics_path(r["name"]), {}) or {}).get("prs") or [])
+    s = metric_settings(cfg)
+    when = now or datetime.now(UTC)
+    data = {
+        "config": cfg.hash,
+        "built_at": when.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "min_sample": s.min_sample,
+        "scopes": rollup(rows, s.min_sample, when),
+    }
+    store.write(SUMMARY, data)
+    return data
 
 
 def attribution_path(repo: str) -> str:
@@ -98,4 +144,6 @@ def recompute(store: Store, cfg: Config, repos: dict[str, RepoSpec]) -> dict[str
             },
         )
         summary[spec.name] = info
+        write_pr_metrics(store, cfg, spec, prs)
+    write_rollup(store, cfg)
     return summary

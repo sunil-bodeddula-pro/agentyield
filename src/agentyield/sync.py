@@ -7,6 +7,7 @@ seen for the first time is backfilled back to a cut-off date (180 days unless to
 
 from __future__ import annotations
 
+import hashlib
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -81,6 +82,7 @@ class Syncer:
         except GitHubError as exc:
             res.error = str(exc)
         if not res.error:
+            self.sync_releases(spec)
             cursor["newest"] = newest or cursor.get("newest", "")
             cursor["synced_at"] = iso(datetime.now(UTC))
             if since and (not cursor.get("backfilled_to") or since < cursor["backfilled_to"]):
@@ -94,7 +96,10 @@ class Syncer:
         detail = self.gh.pull(spec.name, number)
         timeline = self.gh.timeline(spec.name, number)
         record = build_record(spec.name, detail, timeline, self.flt, self.agents, spec.restricted)
+        self._files(spec, record)
         self._line_counts(spec, record)
+        for n in record["closes"]:
+            self._store_issue(spec, n)
         record["team"] = spec.team
         record["fetched_at"] = iso(datetime.now(UTC))
         record["config"] = self.cfg.hash
@@ -102,6 +107,58 @@ class Syncer:
             res.redactions[kind] = res.redactions.get(kind, 0) + 1
         self.store.write(self.store.pr_path(spec.name, number), record)
         res.fetched += 1
+
+    def _files(self, spec: RepoSpec, record: dict[str, Any]) -> None:
+        """Changed lines without generated, vendored and lock files, and the changed files as short hashes:
+        enough to spot a later PR touching the same files, without storing paths (they can name projects)."""
+        patterns = DEFAULT_EXCLUDED_FILES + spec.exclude_paths
+        files = self.gh.pull_files(spec.name, record["number"])
+        kept = [f for f in files if not excluded_lines(str(f.get("filename", "")), patterns)]
+        record["lines"] = sum(int(f.get("additions", 0)) + int(f.get("deletions", 0)) for f in kept)
+        record["files"] = sorted({hashlib.sha256(str(f.get("filename", "")).encode()).hexdigest()[:12] for f in kept})
+
+    def _store_issue(self, spec: RepoSpec, number: int) -> None:
+        try:
+            issue = self.gh.issue(spec.name, number)
+        except GitHubError:
+            return  # deleted, transferred, or not visible: the PR still counts, the issue doesn't
+        labels = [lb.get("name", "") for lb in issue.get("labels") or []]
+        restricted = spec.restricted or self.flt.restricted_label(labels)
+        self.store.write(
+            f"{self.store.repo_dir(spec.name)}/issues/{number}.json",
+            {
+                "number": number,
+                "state": issue.get("state", ""),
+                "closed_at": issue.get("closed_at"),
+                "created_at": issue.get("created_at"),
+                "restricted": restricted,
+                "title": "" if restricted else self.flt.clean(issue.get("title"))[0],
+                "labels": [] if restricted else self.flt.clean_all(labels)[0],
+                "type": ((issue.get("type") or {}).get("name") or "") if isinstance(issue.get("type"), dict) else "",
+            },
+        )
+
+    def sync_releases(self, spec: RepoSpec) -> int:
+        path = f"{self.store.repo_dir(spec.name)}/releases.json"
+        old = self.store.read(path, {}) or {}
+        try:
+            resp = self.gh.releases_page(spec.name, old.get("etag", ""))
+        except GitHubError:
+            return 0
+        if resp.status == 304:
+            return 0
+        releases = [
+            {
+                "tag": "" if spec.restricted else self.flt.clean(r.get("tag_name"))[0],
+                "published_at": r.get("published_at"),
+                "draft": bool(r.get("draft")),
+                "prerelease": bool(r.get("prerelease")),
+            }
+            for r in resp.data or []
+            if r.get("published_at")
+        ]
+        self.store.write(path, {"etag": resp.etag, "releases": releases})
+        return len(releases)
 
     def _line_counts(self, spec: RepoSpec, record: dict[str, Any]) -> None:
         """Changed lines per commit, for PRs mixing agent and human commits. Counts already stored for a commit

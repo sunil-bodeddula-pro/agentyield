@@ -50,6 +50,9 @@ class Org:
         self.properties: dict[str, dict[str, Any]] = {}
         self.files: dict[tuple[str, str], str] = {}
         self.commit_files: dict[str, list[dict[str, Any]]] = {}  # by sha
+        self.pr_files: dict[tuple[str, int], list[dict[str, Any]]] = {}
+        self.issues: dict[tuple[str, int], dict[str, Any]] = {}
+        self.releases: dict[str, list[dict[str, Any]]] = {}
         for repo in ("acme/checkout-service", "acme/web-dashboard", "acme/security-patches", "acme/untracked"):
             self.pulls[repo] = {}
         self._build()
@@ -334,6 +337,16 @@ class FakeGitHub:
             return 200, chunk, {"ETag": tag, **extra}
         if rest[0] == "pulls" and len(rest) == 2:
             return 200, org.pulls[repo][int(rest[1])], {}
+        if rest == ["releases"]:
+            body = org.releases.get(repo, [])
+            tag = '"' + hashlib.sha1(json.dumps(body).encode()).hexdigest() + '"'
+            return (304, None, {"ETag": tag}) if etag == tag else (200, body, {"ETag": tag})
+        if rest[0] == "issues" and len(rest) == 2:
+            return 200, org.issues[(repo, int(rest[1]))], {}
+        if rest[0] == "pulls" and rest[2:] == ["files"]:
+            default = [{"filename": "src/app.py", "additions": 40, "deletions": 10}]
+            chunk, extra = self._page(org.pr_files.get((repo, int(rest[1])), default), q, path)
+            return 200, chunk, extra
         if rest[0] == "commits" and len(rest) == 2:
             files = org.commit_files.get(rest[1], [{"filename": "src/app.py", "additions": 10, "deletions": 0}])
             return 200, {"sha": rest[1], "files": files}, {}

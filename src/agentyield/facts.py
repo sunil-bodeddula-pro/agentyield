@@ -15,6 +15,8 @@ from typing import Any
 from .guardrails import Filter
 
 CONVENTIONAL = re.compile(r"^(\w+)(?:\([^)]*\))?!?:\s")
+CLOSES = re.compile(r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?\s+(?:([\w.-]+/[\w.-]+))?#(\d+)", re.I)
+REVERTS = re.compile(r"\breverts\s+(?:([\w.-]+/[\w.-]+))?#(\d+)", re.I)
 COAUTHOR = re.compile(r"^\s*co-authored-by:\s*(.*?)\s*<([^>]*)>\s*$", re.I | re.M)
 BOT_EMAIL = re.compile(r"(\[bot\]@users\.noreply\.github\.com|^no-?reply@)", re.I)
 
@@ -69,6 +71,22 @@ def commit_identities(ev: dict[str, Any], agents: dict[str, AgentRule]) -> dict[
     a_name, a_email = str(author.get("name") or ""), str(author.get("email") or "")
     author_bot = a_name if is_agent_identity(a_name, a_email, agents) else ""
     return {"coauthors": sorted(set(agents_found)), "human_coauthors": humans, "author_bot": author_bot}
+
+
+def closing_issues(repo: str, body: str) -> list[int]:
+    """Issues this PR closes ('Closes #12', 'fixes acme/app#7'), in the same repository only."""
+    out = {int(n) for other, n in CLOSES.findall(body or "") if not other or other.lower() == repo.lower()}
+    return sorted(out)
+
+
+def reverted_pr(repo: str, title: str, body: str) -> int | None:
+    """The PR this one reverts. GitHub's Revert button writes 'Reverts owner/repo#N' in the description."""
+    if not (title or "").lower().startswith("revert"):
+        return None
+    for other, n in REVERTS.findall(body or ""):
+        if not other or other.lower() == repo.lower():
+            return int(n)
+    return None
 
 
 def _commit_time(ev: dict[str, Any]) -> str:
@@ -206,4 +224,13 @@ def build_record(
         "signals": signals,
         "summary": summarize(author, commits, reviews, force_pushes),
         "redacted": sorted(set(t_found + b_found + l_found)),
+        # read from the description here and kept as numbers only; the description itself is dropped
+        "closes": closing_issues(repo, pr.get("body") or ""),
+        "reverts": reverted_pr(repo, pr.get("title") or "", pr.get("body") or ""),
+        "title_type": _title_type(pr.get("title") or ""),
     }
+
+
+def _title_type(title: str) -> str:
+    m = CONVENTIONAL.match(title)
+    return m.group(1).lower() if m else ""

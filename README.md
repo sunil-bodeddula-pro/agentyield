@@ -4,7 +4,7 @@
 
 It runs on a laptop or a remote machine, with no database: data lives in JSON files in a folder or a `gs://` / `s3://` bucket.
 
-> **Status: early development.** Batches 1 and 2 of 9 are done: configuration, GitHub sync, the sensitive-data filter, and attribution (who wrote each PR). Metrics and the dashboard come in batches 3 and 4. See the [roadmap](docs/ROADMAP.md).
+> **Status: early development.** Batches 1 to 3 of 9 are done: configuration, GitHub sync, the sensitive-data filter, attribution (who wrote each PR) and the metrics engine. The dashboard comes in batch 4. See the [roadmap](docs/ROADMAP.md).
 
 ## What works today
 
@@ -17,6 +17,23 @@ It runs on a laptop or a remote machine, with no database: data lives in JSON fi
 - `agentyield attribution [--prs]`: every PR labelled **agent**, **assisted**, **human** or **excluded** (dependency bots), with the agent, its share of the changed lines, a confidence and the evidence.
 - `agentyield label set owner/repo#42 agent --agent claude-code --note "…"`: an admin correction that always wins and survives re-syncs (`label clear`, `label list`).
 - `agentyield recompute`: rebuilds the derived files from stored facts after a rule change, with no GitHub calls.
+- `agentyield metrics [--scope team:payments | repo:acme/app] [--json]`: the numbers below for agent, assisted and human work side by side, a matched comparison, and the last 4 weeks against the 4 before.
+
+## Metrics
+
+| Group | Metrics |
+| :--- | :--- |
+| Code | Agent share of merged code (lines, without generated, vendored and lock files); lines and PRs merged |
+| Functionality | Issues closed (`Closes #12`), features shipped (closed issues or PRs with a feature label), user-facing changes (`feat`/`fix`), releases and time to release |
+| Speed | Working hours to first review and to merge (median and 85th percentile) |
+| Back-and-forth | Review round trips, commits after the first review, force-pushes |
+| Effectiveness | Merge rate, reverts within 30 days, follow-up fixes within 14 days (a later `fix` PR touching the same files), human review coverage, self-merges |
+| Trend | Rolling 4-week figures for the last 12 weeks; last 4 weeks against the 4 before |
+
+- **Working hours:** times between events count only `metrics.working_hours` (default Mon to Fri, 09:00 to 18:00 UTC), so weekends don't inflate review times.
+- **Small samples:** a rate or median from fewer than `metrics.min_sample` PRs (default 10) is shown as `-`, not as a number.
+- **Matched comparison:** agents tend to take smaller tasks, so agent PRs are also compared with human PRs of the same repository and size band, weighted by where the agent work is.
+- **Approximations, stated plainly:** follow-up fixes are matched by file, not line; a PR's release is the first release published after it merged.
 
 ## How attribution works
 
