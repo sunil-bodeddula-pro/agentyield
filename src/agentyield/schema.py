@@ -205,6 +205,7 @@ SCHEMA = Obj(
     fields={
         "version": Int("Config format version", minimum=1, maximum=1),
         "store": Str("Where data is kept: a folder, gs://bucket/path or s3://bucket/path"),
+        "cache_dir": Str("Local folder for repository mirrors (code survival); never shared"),
         "github": Obj(
             {
                 "api_url": Str("GitHub API URL; change it for GitHub Enterprise Server"),
@@ -278,6 +279,17 @@ SCHEMA = Obj(
                 "min_sample": Int(minimum=1),
                 "ignore_authors": TEXTS,
                 "agent_share_threshold": Fraction("Share of a PR's lines above which it counts as agent-authored"),
+                "coverage": Obj(
+                    {
+                        "status_context": Str(
+                            "Commit status that reports coverage on changed lines, e.g. codecov/patch"
+                        ),
+                        "check_name": Str("Or: a check run whose title or summary reports it"),
+                        "pattern": Str("Regular expression with one group for the percentage"),
+                    }
+                ),
+                "production_environments": List(Str("Deployment environment that counts as production")),
+                "code_survival": Bool("Measure surviving lines with git blame on a local mirror (needs git)"),
             }
         ),
         "guardrails": Obj(

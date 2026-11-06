@@ -207,6 +207,8 @@ def build_record(
         "author_is_bot": (pr.get("user") or {}).get("type") == "Bot",
         "merged_by": (pr.get("merged_by") or {}).get("login", ""),
         "base": (pr.get("base") or {}).get("ref", ""),
+        "head_sha": (pr.get("head") or {}).get("sha", ""),
+        "merge_commit_sha": pr.get("merge_commit_sha") if pr.get("merged_at") else None,
         "created_at": pr.get("created_at"),
         "ready_at": ready[0] if ready else pr.get("created_at"),
         "first_review_at": human_reviews[0] if human_reviews else None,

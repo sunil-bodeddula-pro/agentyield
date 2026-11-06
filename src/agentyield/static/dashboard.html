@@ -239,6 +239,21 @@ td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
           { name: "Needed a follow-up fix", get: (k) => g[k].follow_up_fix_rate },
           { name: "Human review coverage", get: (k) => g[k].human_review_coverage },
         ], ["agent", "assisted", "human"], pct, "Effectiveness by group")),
+      card("Quality", "CI on the first push, findings and survival of merged code.",
+        grouped([
+          { name: "Passed CI on the first push", get: (k) => g[k].ci_first_pass_rate },
+          { name: "Code still alive after 30+ days", get: (k) => g[k].code_survival },
+          { name: "Coverage on changed lines", get: (k) => g[k].median_coverage_changed == null ? null : g[k].median_coverage_changed / 100 },
+        ], ["agent", "assisted", "human"], pct, "Quality by group")),
+      card("Delivery", "Production deployments in this scope, and how long work took to reach production.",
+        `<div class="wrap"><table><tbody>
+          <tr><td>Production deployments</td><td class="n">${num(b.delivery?.deployments ?? 0)}</td></tr>
+          <tr><td>Failed deployments</td><td class="n">${num(b.delivery?.failed ?? 0)} (${pct(b.delivery?.failure_rate)})</td></tr>
+          <tr><td>Hours from first commit to production, agent (median)</td><td class="n">${hrs(g.agent.median_hours_to_production)}</td></tr>
+          <tr><td>Hours from first commit to production, human (median)</td><td class="n">${hrs(g.human.median_hours_to_production)}</td></tr>
+          <tr><td>New code-scanning findings per PR, agent / human</td><td class="n">${num(g.agent.scan_alerts_per_pr)} / ${num(g.human.scan_alerts_per_pr)}</td></tr>
+          <tr><td>Fix-up commits after a CI failure per PR, agent / human</td><td class="n">${num(g.agent.fixups_after_ci_failure_per_pr)} / ${num(g.human.fixups_after_ci_failure_per_pr)}</td></tr>
+        </tbody></table></div>`),
       card("Agent against human, matched", `Human PRs reweighted to the same repositories and sizes as ${m.agent_prs_matched ?? 0} of ${m.agent_prs ?? 0} agent PRs.`,
         matchedRows ? `<div class="wrap"><table><thead><tr><th>Metric</th><th class="n">Agent</th><th class="n">Human</th></tr></thead><tbody>${matchedRows}</tbody></table></div>` : `<div class="empty">Not enough comparable work yet.</div>`),
     ].join("");
@@ -252,7 +267,11 @@ td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
     ["Force-pushes per PR", "force_pushes_per_pr", num], ["Human review coverage", "human_review_coverage", pct],
     ["Self-merged without review", "self_merge_rate", pct], ["Reverted", "revert_rate", pct], ["Needed a follow-up fix", "follow_up_fix_rate", pct],
     ["User-facing changes", "user_facing_share", pct], ["Issues closed", "issues_closed", num], ["Features shipped", "features_shipped", num],
-    ["Released", "released", num],
+    ["Released", "released", num], ["Passed CI on the first push", "ci_first_pass_rate", pct],
+    ["Fix-up commits after a CI failure, per PR", "fixups_after_ci_failure_per_pr", num],
+    ["Coverage on changed lines (median)", "median_coverage_changed", (v) => v == null ? "–" : `${v.toFixed(1)}%`],
+    ["New code-scanning findings per PR", "scan_alerts_per_pr", num], ["Code still alive after 30+ days", "code_survival", pct],
+    ["Hours from first commit to production (median)", "median_hours_to_production", hrs],
   ];
   function table(b) {
     const g = b.groups;

@@ -8,16 +8,20 @@ seen for the first time is backfilled back to a cut-off date (180 days unless to
 from __future__ import annotations
 
 import hashlib
+import os
+import subprocess
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from . import survival
 from .attribution import DEFAULT_EXCLUDED_FILES, excluded_lines, needs_line_counts
 from .config import Config, RepoSpec
 from .facts import AgentRule, build_record
 from .github import GitHub, GitHubError
 from .guardrails import Filter
+from .quality import add_ci, add_scanning, sync_deployments
 from .store import Store
 
 DEFAULT_BACKFILL_DAYS = 180
@@ -46,6 +50,7 @@ class Syncer:
         self.store, self.gh, self.cfg = store, gh, cfg
         self.flt: Filter = cfg.filter()
         self.agents: dict[str, AgentRule] = cfg.agents()
+        self._cursor: dict[str, Any] = {}
 
     def cursor_path(self, repo: str) -> str:
         return f"{self.store.repo_dir(repo)}/cursor.json"
@@ -54,6 +59,7 @@ class Syncer:
         """New and updated PRs since the cursor; with `since`, everything updated after that date (a backfill)."""
         res = RepoResult(spec.name)
         cursor = self.store.read(self.cursor_path(spec.name), {}) or {}
+        self._cursor = cursor
         backfill = since is not None or not cursor
         cutoff = since or cursor.get("newest") or days_ago(DEFAULT_BACKFILL_DAYS)
         newest = cursor.get("newest", "")
@@ -83,6 +89,9 @@ class Syncer:
             res.error = str(exc)
         if not res.error:
             self.sync_releases(spec)
+            self.sync_deployments(spec, cutoff if backfill else days_ago(DEFAULT_BACKFILL_DAYS))
+            if self.cfg.section("metrics").get("code_survival"):
+                self.measure_survival(spec)
             cursor["newest"] = newest or cursor.get("newest", "")
             cursor["synced_at"] = iso(datetime.now(UTC))
             if since and (not cursor.get("backfilled_to") or since < cursor["backfilled_to"]):
@@ -96,8 +105,13 @@ class Syncer:
         detail = self.gh.pull(spec.name, number)
         timeline = self.gh.timeline(spec.name, number)
         record = build_record(spec.name, detail, timeline, self.flt, self.agents, spec.restricted)
+        old = self.store.read(self.store.pr_path(spec.name, number), {}) or {}
         self._files(spec, record)
         self._line_counts(spec, record)
+        add_ci(self.gh, spec.name, record, old, dict(self.cfg.section("metrics").get("coverage") or {}))
+        add_scanning(self.gh, spec.name, record, self._cursor)
+        if old.get("survival") and old.get("merge_commit_sha") == record.get("merge_commit_sha"):
+            record["survival"] = old["survival"]
         for n in record["closes"]:
             self._store_issue(spec, n)
         record["team"] = spec.team
@@ -137,6 +151,39 @@ class Syncer:
                 "type": ((issue.get("type") or {}).get("name") or "") if isinstance(issue.get("type"), dict) else "",
             },
         )
+
+    def sync_deployments(self, spec: RepoSpec, since: str) -> None:
+        envs = list(self.cfg.section("metrics").get("production_environments") or ["production", "prod"])
+        path = f"{self.store.repo_dir(spec.name)}/deployments.json"
+        old = self.store.read(path, {}) or {}
+        self.store.write(path, sync_deployments(self.gh, spec.name, envs, old, min(since, old.get("since", since))))
+
+    def measure_survival(self, spec: RepoSpec) -> int:
+        """git blame on a local mirror for merged PRs at least 30 days old, re-measured weekly."""
+        if not survival.available():
+            return 0
+        now = datetime.now(UTC)
+        due = [rel for rel in self.store.pr_files(spec.name) if survival.due(self.store.read(rel) or {}, now)]
+        if not due:
+            return 0
+        base = os.environ.get("AGENTYIELD_GIT_BASE") or str(
+            self.cfg.section("github").get("web_url") or "https://github.com"
+        )
+        cache = str(self.cfg.data.get("cache_dir") or "~/.agentyield/cache")
+        token = "" if base.startswith(("file:", "/")) else self.gh.token
+        try:
+            path = survival.mirror(cache, spec.name, f"{base.rstrip('/')}/{spec.name}.git", token)
+        except (OSError, subprocess.SubprocessError):
+            return 0
+        patterns = DEFAULT_EXCLUDED_FILES + spec.exclude_paths
+        done = 0
+        for rel in due:
+            rec = self.store.read(rel)
+            if rec and survival.update(rec, path, patterns, now):
+                done += 1
+            if rec:
+                self.store.write(rel, rec)
+        return done
 
     def sync_releases(self, spec: RepoSpec) -> int:
         path = f"{self.store.repo_dir(spec.name)}/releases.json"

@@ -4,7 +4,7 @@
 
 It runs on a laptop or a remote machine, with no database: data lives in JSON files in a folder or a `gs://` / `s3://` bucket.
 
-> **Status: early development.** Batches 1 to 4 of 9 are done: configuration, GitHub sync, the sensitive-data filter, attribution, the metrics engine, and the dashboard with GitHub sign-in. See the [roadmap](docs/ROADMAP.md).
+> **Status: early development.** Batches 1 to 5 of 9 are done: configuration, GitHub sync, the sensitive-data filter, attribution, the metrics engine, the dashboard with GitHub sign-in, and quality signals. See the [roadmap](docs/ROADMAP.md).
 
 ## What works today
 
@@ -68,11 +68,15 @@ Set the App's callback URL to `<base_url>/auth/callback`. Without sign-in, `serv
 | Speed | Working hours to first review and to merge (median and 85th percentile) |
 | Back-and-forth | Review round trips, commits after the first review, force-pushes |
 | Effectiveness | Merge rate, reverts within 30 days, follow-up fixes within 14 days (a later `fix` PR touching the same files), human review coverage, self-merges |
+| Quality | Passed CI on the first push, fix-up commits after a CI failure, coverage on changed lines, new code-scanning findings per PR, code still alive after 30+ days |
+| Delivery | Hours from first commit to production, production deployments and the failed-deployment rate |
 | Trend | Rolling 4-week figures for the last 12 weeks; last 4 weeks against the 4 before |
 
 - **Working hours:** times between events count only `metrics.working_hours` (default Mon to Fri, 09:00 to 18:00 UTC), so weekends don't inflate review times.
 - **Small samples:** a rate or median from fewer than `metrics.min_sample` PRs (default 10) is shown as `-`, not as a number.
 - **Matched comparison:** agents tend to take smaller tasks, so agent PRs are also compared with human PRs of the same repository and size band, weighted by where the agent work is.
+- **Quality sources:** CI from check runs and commit statuses on every commit; coverage from a status or check you name; findings from GitHub code scanning (repositories without it are skipped); deployments to `metrics.production_environments` (default `production`, `prod`).
+- **Code survival (opt-in):** `metrics.code_survival: true` measures, with `git blame` on a blob-less local mirror in `cache_dir`, how many lines a merged PR added are still there 30+ days later. Needs `git`. Paths and code stay in the local mirror; only counts are stored. Rebase merges can't be traced and show as unknown.
 - **Approximations, stated plainly:** follow-up fixes are matched by file, not line; a PR's release is the first release published after it merged.
 
 ## How attribution works
@@ -118,6 +122,11 @@ agents:
   in-house-bot:
     bot_logins: ["acme-agent[bot]"]
     trailers: ["Co-Authored-By: Acme Agent"]
+metrics:
+  coverage:
+    status_context: codecov/patch  # where coverage on changed lines is reported
+  production_environments: [production]
+  code_survival: true              # git blame on a local mirror (needs git)
 guardrails:
   deny_terms_file: deny-terms.txt  # customer names, codenames; one per line
   restricted_labels: [security, embargo]

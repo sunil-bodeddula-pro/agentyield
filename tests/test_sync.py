@@ -65,7 +65,7 @@ class ApplyAndSyncTest(OrgCase):
         code, out = self.run_cli("sync")
         self.assertEqual(code, 0, out)
         self.assertEqual(out.count("unchanged"), 3)
-        self.assertEqual(len(self.gh.requests) - before, 6)  # conditional PR-list and release requests per repo
+        self.assertEqual(len(self.gh.requests) - before, 12)  # conditional: PR list, releases, 2 deployment envs
         self.assertEqual(self.gh.rate_remaining, rate)  # all answered 304: no rate limit used
         self.org.touch("acme/checkout-service", 4, minutes=5)
         self.org.pulls["acme/checkout-service"][4]["title"] = "docs: access guide"

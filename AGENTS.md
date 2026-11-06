@@ -28,6 +28,7 @@ Run all of them before saying a change is done, and report the results honestly.
 | `src/agentyield/metrics.py` | Per-PR metrics, working hours, rollups, matched comparison, weekly trends |
 | `src/agentyield/web.py`, `static/dashboard.html` | Dashboard server, sign-in and access rules, static build; the page (vanilla JS, SVG charts) |
 | `src/agentyield/appauth.py` | GitHub App JWT (RS256) on the standard library |
+| `src/agentyield/quality.py`, `survival.py` | CI, coverage, code scanning and deployments at sync time; code survival with git blame on a local mirror |
 | `src/agentyield/ops.py` | `config diff` / `apply`, status |
 | `src/agentyield/store.py` | JSON file store and its folder, GCS and S3 backends; the writer lease |
 | `tests/mockgh.py` | Fixture organisation with planted secrets, and a fake GitHub server |

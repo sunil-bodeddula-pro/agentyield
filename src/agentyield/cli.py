@@ -298,15 +298,24 @@ LINES = [
     ("User-facing changes", "user_facing_share", "pct"),
     ("Issues closed", "issues_closed", "int"),
     ("Features shipped", "features_shipped", "int"),
+    ("Passed CI on the first push", "ci_first_pass_rate", "pct"),
+    ("Fix-up commits after a CI failure, per PR", "fixups_after_ci_failure_per_pr", "num"),
+    ("Coverage on changed lines (median)", "median_coverage_changed", "cov"),
+    ("New code-scanning findings per PR", "scan_alerts_per_pr", "num"),
+    ("Code still alive after 30+ days", "code_survival", "pct"),
+    ("Hours from first commit to production", "median_hours_to_production", "h"),
 ]
 
 
 def fmt(value: Any, kind: str) -> str:
     if value is None:
         return "-"
-    return {"pct": f"{value:.0%}", "h": f"{value:.1f}h", "num": f"{value:.2f}".rstrip("0").rstrip(".")}.get(
-        kind, f"{value:,}"
-    )
+    return {
+        "pct": f"{value:.0%}",
+        "h": f"{value:.1f}h",
+        "cov": f"{value:.1f}%",
+        "num": f"{value:.2f}".rstrip("0").rstrip("."),
+    }.get(kind, f"{value:,}")
 
 
 def cmd_metrics(args: argparse.Namespace) -> int:
@@ -335,6 +344,12 @@ def cmd_metrics(args: argparse.Namespace) -> int:
         for key, v in m["metrics"].items():
             kind = "h" if "hours" in key else "pct" if "rate" in key else "num"
             print(f"  {key.replace('_', ' '):<40} agent {fmt(v['agent'], kind):>7}   human {fmt(v['human'], kind):>7}")
+    dl = block.get("delivery") or {}
+    if dl.get("deployments"):
+        print(
+            f"Production deployments: {dl['deployments']}, failed {dl['failed']} "
+            f"(Failed production deployments: {fmt(dl['failure_rate'], 'pct')})"
+        )
     c = block["change"]
     print("Last 4 weeks against the 4 before:")
     for key, v in c.items():

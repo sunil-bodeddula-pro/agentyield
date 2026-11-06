@@ -147,6 +147,7 @@ def pr_metrics(
     issues: dict[int, dict[str, Any]],
     releases: list[dict[str, Any]],
     s: Settings,
+    deployments: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     created, ready = parse_ts(rec.get("created_at")), parse_ts(rec.get("ready_at") or rec.get("created_at"))
     first_review, merged = parse_ts(rec.get("first_review_at")), parse_ts(rec.get("merged_at"))
@@ -221,6 +222,41 @@ def pr_metrics(
         "hours_to_release": round(((parse_ts(release["published_at"]) or merged) - merged).total_seconds() / 3600, 2)
         if release and merged
         else None,
+        **quality_metrics(rec, merged, deployments or []),
+    }
+
+
+def quality_metrics(rec: dict[str, Any], merged: datetime | None, deployments: list[dict[str, Any]]) -> dict[str, Any]:
+    """CI, coverage, code scanning, code survival and lead time to production for one PR."""
+    commits = sorted(rec.get("commits") or [], key=lambda c: c.get("at") or "")
+    states = [c.get("ci") for c in commits if c.get("ci") in ("pass", "fail")]
+    first_fail = next((i for i, c in enumerate(commits) if c.get("ci") == "fail"), None)
+    scan = rec.get("scan")
+    surv = rec.get("survival") or {}
+    # lead time starts at the first commit (DORA's definition); a PR without commits starts when it was opened
+    starts = [t for t in (parse_ts(c.get("at")) for c in commits) if t] or [
+        t for t in [parse_ts(rec.get("created_at"))] if t
+    ]
+    deployed = None
+    if merged:
+        for d in sorted(deployments, key=lambda d: d.get("success_at") or ""):
+            when = parse_ts(d.get("success_at"))
+            if when and when >= merged:
+                deployed = when
+                break
+    return {
+        "ci_first_pass": (states[0] == "pass") if states else None,
+        "ci_failed_commits": sum(1 for s_ in states if s_ == "fail") if states else None,
+        "fixups_after_ci_failure": (len(commits) - first_fail - 1)
+        if first_fail is not None
+        else (0 if states else None),
+        "coverage_changed": rec.get("coverage_changed"),
+        "scan_alerts": scan.get("alerts") if isinstance(scan, dict) else None,
+        "survival_added": surv.get("added"),
+        "survival_alive": surv.get("alive"),
+        "hours_to_production": round((deployed - min(starts)).total_seconds() / 3600, 2)
+        if deployed and starts
+        else None,
     }
 
 
@@ -279,9 +315,45 @@ def summarize(prs: list[dict[str, Any]], min_sample: int) -> dict[str, Any]:
         "features_shipped": sum(p["feature"] for p in merged),
         "released": sum(1 for p in merged if p["release"]),
         "median_hours_to_release": _median(p["hours_to_release"] for p in merged),
+        **summarize_quality(prs, merged, gated),
         "small_sample": small,
     }
     return out
+
+
+def summarize_quality(prs: list[dict[str, Any]], merged: list[dict[str, Any]], gated: Any) -> dict[str, Any]:
+    with_ci = [p for p in prs if p.get("ci_first_pass") is not None]
+    scanned = [p for p in merged if p.get("scan_alerts") is not None]
+    measured = [p for p in merged if p.get("survival_added")]
+    deployed = [p for p in merged if p.get("hours_to_production") is not None]
+    scan_lines = sum(p["lines"] for p in scanned)
+    return {
+        "ci_first_pass_rate": gated(_rate(sum(bool(p["ci_first_pass"]) for p in with_ci), len(with_ci)), len(with_ci)),
+        "fixups_after_ci_failure_per_pr": gated(
+            _rate(sum(p["fixups_after_ci_failure"] or 0 for p in with_ci), len(with_ci)), len(with_ci)
+        ),
+        "median_coverage_changed": gated(
+            _median(p.get("coverage_changed") for p in merged),
+            sum(1 for p in merged if p.get("coverage_changed") is not None),
+        ),
+        "scan_alerts_per_pr": gated(_rate(sum(p["scan_alerts"] for p in scanned), len(scanned)), len(scanned)),
+        "scan_alerts_per_1000_lines": gated(
+            round(1000 * sum(p["scan_alerts"] for p in scanned) / scan_lines, 2) if scan_lines else None, len(scanned)
+        ),
+        "code_survival": gated(
+            _rate(sum(p["survival_alive"] or 0 for p in measured), sum(p["survival_added"] for p in measured)),
+            len(measured),
+        ),
+        "median_hours_to_production": gated(_median(p["hours_to_production"] for p in deployed), len(deployed)),
+    }
+
+
+def delivery(deployments: list[dict[str, Any]], min_sample: int) -> dict[str, Any]:
+    """Production deployments in the scope: how many, how many failed (DORA's change failure signal)."""
+    final = [d for d in deployments if d.get("state") in ("success", "failure", "error")]
+    failed = sum(1 for d in final if d["state"] != "success")
+    rate = _rate(failed, len(final))
+    return {"deployments": len(final), "failed": failed, "failure_rate": rate if len(final) >= min_sample else None}
 
 
 MATCHED = ("median_hours_to_merge", "merge_rate", "median_review_iterations", "revert_rate", "follow_up_fix_rate")
@@ -349,7 +421,14 @@ def week_range(end: datetime, n: int) -> list[str]:
     return [(last - timedelta(weeks=n - 1 - i)).isoformat() for i in range(n)]
 
 
-def rollup(prs: list[dict[str, Any]], min_sample: int, now: datetime, n_weeks: int = 12) -> dict[str, Any]:
+def rollup(
+    prs: list[dict[str, Any]],
+    min_sample: int,
+    now: datetime,
+    n_weeks: int = 12,
+    deployments: dict[str, list[dict[str, Any]]] | None = None,
+    teams: dict[str, str] | None = None,
+) -> dict[str, Any]:
     counted = [p for p in prs if p["group"] != "excluded"]
     scopes: dict[str, list[dict[str, Any]]] = {"org": counted}
     for p in counted:
@@ -361,7 +440,20 @@ def rollup(prs: list[dict[str, Any]], min_sample: int, now: datetime, n_weeks: i
     for scope, sel in sorted(scopes.items()):
         groups = {g: summarize([p for p in sel if g == "all" or p["group"] == g], min_sample) for g in GROUPS}
         trend = weekly(sel, weeks, min_sample)
-        out[scope] = {"groups": groups, "matched": matched(sel), "weekly": trend, "change": change(sel, now)}
+        deps = deployments or {}
+        if scope == "org":
+            mine = [d for ds in deps.values() for d in ds]
+        elif scope.startswith("repo:"):
+            mine = deps.get(scope[5:], [])
+        else:
+            mine = [d for repo, ds in deps.items() if (teams or {}).get(repo) == scope[5:] for d in ds]
+        out[scope] = {
+            "groups": groups,
+            "matched": matched(sel),
+            "weekly": trend,
+            "change": change(sel, now),
+            "delivery": delivery(mine, min_sample),
+        }
     return out
 
 

@@ -39,8 +39,9 @@ def write_pr_metrics(store: Store, cfg: Config, spec: RepoSpec, attributions: di
     facts = {int(r["number"]): r for r in (store.read(rel) for rel in store.pr_files(spec.name)) if r}
     issues = {int(i["number"]): i for i in (store.read(rel) for rel in store.files(f"{base}/issues/")) if i}
     releases = (store.read(f"{base}/releases.json", {}) or {}).get("releases") or []
+    deployments = (store.read(f"{base}/deployments.json", {}) or {}).get("deployments") or []
     rows = [
-        pr_metrics(rec, attributions[str(n)], facts, issues, releases, s)
+        pr_metrics(rec, attributions[str(n)], facts, issues, releases, s, deployments)
         for n, rec in sorted(facts.items())
         if str(n) in attributions
     ]
@@ -51,15 +52,19 @@ def write_rollup(store: Store, cfg: Config, now: datetime | None = None) -> dict
     """Organisation, team and repository rollups over every applied repository (hidden ones excluded)."""
     applied = (store.manifest().get("applied") or {}).get("repos") or {}
     rows: list[dict[str, Any]] = []
+    deployments: dict[str, list[dict[str, Any]]] = {}
+    teams: dict[str, str] = {}
     for r in applied.values():
         rows.extend((store.read(metrics_path(r["name"]), {}) or {}).get("prs") or [])
+        deployments[r["name"]] = (store.read(f"repos/{r['name']}/deployments.json", {}) or {}).get("deployments") or []
+        teams[r["name"]] = r.get("team", "")
     s = metric_settings(cfg)
     when = now or datetime.now(UTC)
     data = {
         "config": cfg.hash,
         "built_at": when.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "min_sample": s.min_sample,
-        "scopes": rollup(rows, s.min_sample, when),
+        "scopes": rollup(rows, s.min_sample, when, deployments=deployments, teams=teams),
     }
     store.write(SUMMARY, data)
     return data

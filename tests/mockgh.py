@@ -53,6 +53,12 @@ class Org:
         self.pr_files: dict[tuple[str, int], list[dict[str, Any]]] = {}
         self.issues: dict[tuple[str, int], dict[str, Any]] = {}
         self.releases: dict[str, list[dict[str, Any]]] = {}
+        self.checks: dict[str, str] = {}  # sha -> "pass" | "fail" (no entry: no CI)
+        self.coverage: dict[str, str] = {}  # sha -> codecov/patch description
+        self.scanning: dict[tuple[str, int], list[dict[str, Any]]] = {}
+        self.scanning_disabled: set[str] = set()
+        self.deployments: dict[str, list[dict[str, Any]]] = {}
+        self.deployment_statuses: dict[int, list[dict[str, Any]]] = {}
         for repo in ("acme/checkout-service", "acme/web-dashboard", "acme/security-patches", "acme/untracked"):
             self.pulls[repo] = {}
         self._build()
@@ -84,7 +90,11 @@ class Org:
             "state": "closed" if (merged or closed) else "open",
             "draft": False,
             "user": {"login": author, "type": "Bot" if bot else "User"},
-            "head": {"ref": branch},
+            "head": {
+                "ref": branch,
+                "sha": next((e["sha"] for e in reversed(events) if e.get("event") == "committed"), "0" * 40),
+            },
+            "merge_commit_sha": f"{n:040x}" if merged else None,
             "base": {"ref": "main"},
             "labels": [{"name": lb} for lb in labels],
             "body": body,
@@ -167,6 +177,31 @@ class Org:
             ],
             "b" * 40: [{"filename": "tests/test_keys.py", "additions": 10, "deletions": 0}],
             "c" * 40: [{"filename": "src/replay.py", "additions": 18, "deletions": 2}],
+        }
+        # CI on PR 1: the first push fails, the next two pass -> not green first time, 2 commits after the failure.
+        self.checks = {"a" * 40: "fail", "b" * 40: "pass", "c" * 40: "pass", "d" * 40: "pass"}
+        self.coverage = {"c" * 40: "87.50% of diff hit (target 80.00%)"}
+        self.scanning[("acme/checkout-service", 1)] = [
+            {"number": 1, "state": "open", "rule": {"severity": "error", "security_severity_level": "high"}},
+            {"number": 2, "state": "open", "rule": {"severity": "warning", "security_severity_level": None}},
+            {"number": 3, "state": "fixed", "rule": {"severity": "error", "security_severity_level": "critical"}},
+        ]
+        self.scanning_disabled = {"acme/web-dashboard"}
+        # Production: one deployment fails, then one succeeds after PRs 1 and 2 merged.
+        dep_at = self.now - timedelta(days=8)
+        self.deployments["acme/checkout-service"] = [
+            {"id": 11, "sha": "x" * 40, "environment": "production", "created_at": ts(dep_at - h)},
+            {"id": 12, "sha": "y" * 40, "environment": "production", "created_at": ts(dep_at)},
+        ]
+        self.deployment_statuses = {
+            11: [
+                {"state": "in_progress", "created_at": ts(dep_at - h)},
+                {"state": "failure", "created_at": ts(dep_at - h / 2)},
+            ],
+            12: [
+                {"state": "in_progress", "created_at": ts(dep_at)},
+                {"state": "success", "created_at": ts(dep_at + h)},
+            ],
         }
         # PR 2: human, secrets in title and branch, deny term.
         self.add_pr(
@@ -379,6 +414,30 @@ class FakeGitHub:
             default = [{"filename": "src/app.py", "additions": 40, "deletions": 10}]
             chunk, extra = self._page(org.pr_files.get((repo, int(rest[1])), default), q, path)
             return 200, chunk, extra
+        if rest[0] == "commits" and rest[2:] == ["check-runs"]:
+            state = org.checks.get(rest[1])
+            runs = (
+                []
+                if state is None
+                else [
+                    {"name": "tests", "status": "completed", "conclusion": "success" if state == "pass" else "failure"}
+                ]
+            )
+            return 200, {"total_count": len(runs), "check_runs": runs}, {}
+        if rest[0] == "commits" and rest[2:] == ["status"]:
+            desc = org.coverage.get(rest[1])
+            statuses = [{"context": "codecov/patch", "state": "success", "description": desc}] if desc else []
+            return 200, {"state": "success" if statuses else "pending", "statuses": statuses}, {}
+        if rest[:2] == ["code-scanning", "alerts"]:
+            if repo in org.scanning_disabled:
+                return 403, {"message": "Advanced Security must be enabled for this repository"}, {}
+            return 200, org.scanning.get((repo, int(q.get("pr", 0))), []), {}
+        if rest == ["deployments"]:
+            body = [d for d in org.deployments.get(repo, []) if d["environment"] == q.get("environment")]
+            tag = '"' + hashlib.sha1(json.dumps(body).encode()).hexdigest() + '"'
+            return (304, None, {"ETag": tag}) if etag == tag else (200, body, {"ETag": tag})
+        if rest[0] == "deployments" and rest[2:] == ["statuses"]:
+            return 200, org.deployment_statuses.get(int(rest[1]), []), {}
         if rest[0] == "commits" and len(rest) == 2:
             files = org.commit_files.get(rest[1], [{"filename": "src/app.py", "additions": 10, "deletions": 0}])
             return 200, {"sha": rest[1], "files": files}, {}

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import unittest
 from typing import ClassVar
 
@@ -135,9 +136,10 @@ class AttributionFlowTest(OrgCase):
     def test_line_counts_are_fetched_once(self) -> None:
         self.run_cli("config", "apply", "--yes")
         self.org.touch("acme/checkout-service", 1, minutes=6)
-        before = [p for p in self.gh.requests if "/commits/" in p]
+        detail = re.compile(r"/commits/[0-9a-f]{40}$")
+        before = [p for p in self.gh.requests if detail.search(p)]
         self.run_cli("sync")
-        after = [p for p in self.gh.requests if "/commits/" in p]
+        after = [p for p in self.gh.requests if detail.search(p)]
         self.assertEqual(len(before), 3)
         self.assertEqual(after, before)
 
