@@ -32,7 +32,15 @@ from typing import Any
 
 from . import __version__, web
 from . import config as cfgmod
-from .derive import SUMMARY, attribution_path, clear_correction, corrections, recompute, set_correction
+from .derive import (
+    SUMMARY,
+    attribution_path,
+    clear_correction,
+    corrections,
+    recompute,
+    recompute_with_cost,
+    set_correction,
+)
 from .github import AppToken, GitHub, GitHubError, token_from
 from .ops import applied_repos, apply, diff, snapshot, status
 from .review import classifier_for, evaluate, load_sample
@@ -160,6 +168,9 @@ def _applied_config(store: Store, current: cfgmod.Config) -> cfgmod.Config:
     cfg = cfgmod.Config(source=applied["source"], text=raw.decode(), data=cfgmod.check(raw.decode())[0])
     cfg.hash_override = applied["hash"]
     cfg.deny_terms = list(current.section("guardrails").get("deny_terms") or []) + current.deny_terms
+    if current.section("cost").get("people"):  # emails stay in the live config, never in the store
+        cfg.data.setdefault("cost", {})["people"] = current.section("cost")["people"]
+    cfg.source = current.source  # the real location, for files next to the config (kept in memory only)
     return cfg
 
 
@@ -196,7 +207,7 @@ def cmd_sync(args: argparse.Namespace, since: str | None = None, only: list[str]
         manifest = store.manifest()
         manifest["last_sync"] = {"at": iso(datetime.now(UTC)), "fetched": out["fetched"], "errors": out["errors"]}
         store.save_manifest(manifest)
-        recompute(store, cfg, repos)
+        recompute_with_cost(store, cfg, repos)
     finally:
         store.release()
     for r in out["repos"]:
@@ -306,6 +317,8 @@ LINES = [
     ("New code-scanning findings per PR", "scan_alerts_per_pr", "num"),
     ("Code still alive after 30+ days", "code_survival", "pct"),
     ("Hours from first commit to production", "median_hours_to_production", "h"),
+    ("Agent spend (allocated)", "agent_spend_usd", "usd"),
+    ("Spend per merged PR", "spend_per_merged_pr", "usd"),
 ]
 
 
@@ -316,6 +329,7 @@ def fmt(value: Any, kind: str) -> str:
         "pct": f"{value:.0%}",
         "h": f"{value:.1f}h",
         "cov": f"{value:.1f}%",
+        "usd": f"${value:,.2f}",
         "num": f"{value:.2f}".rstrip("0").rstrip("."),
     }.get(kind, f"{value:,}")
 
@@ -356,6 +370,18 @@ def cmd_metrics(args: argparse.Namespace) -> int:
                 f"{fmt(shares['human'].get(cat), 'pct'):>5}"
             )
         print(f"  {'steering comments per agent PR':<40} {fmt(block['groups']['agent']['steering_per_pr'], 'num'):>11}")
+    ft = block.get("features") or {}
+    if ft.get("features"):
+        print(
+            f"Features (Jira/Linear): {ft['done']} of {ft['features']} done; agent-led {ft['agent_led_done']}, "
+            f"human-led {ft['human_led_done']}"
+        )
+        print(
+            f"  {'median lead time, days':<40} agent {fmt(ft['median_lead_time_days_agent'], 'num'):>6}   "
+            f"human {fmt(ft['median_lead_time_days_human'], 'num'):>6}"
+        )
+        if ft.get("spend_per_agent_led_feature") is not None:
+            print(f"  {'spend per agent-led feature':<40} {fmt(ft['spend_per_agent_led_feature'], 'usd'):>12}")
     dl = block.get("delivery") or {}
     if dl.get("deployments"):
         print(

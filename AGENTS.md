@@ -29,6 +29,7 @@ Run all of them before saying a change is done, and report the results honestly.
 | `src/agentyield/web.py`, `static/dashboard.html` | Dashboard server, sign-in and access rules, static build; the page (vanilla JS, SVG charts) |
 | `src/agentyield/appauth.py` | GitHub App JWT (RS256) on the standard library |
 | `src/agentyield/review.py`, `data/review_sample.jsonl` | Review-comment classifier (rules, OpenAI-compatible, Anthropic) and its labelled sample |
+| `src/agentyield/trackers.py`, `cost.py` | Jira and Linear features; spend allocation from files or Claude Code analytics |
 | `src/agentyield/quality.py`, `survival.py` | CI, coverage, code scanning and deployments at sync time; code survival with git blame on a local mirror |
 | `src/agentyield/ops.py` | `config diff` / `apply`, status |
 | `src/agentyield/store.py` | JSON file store and its folder, GCS and S3 backends; the writer lease |

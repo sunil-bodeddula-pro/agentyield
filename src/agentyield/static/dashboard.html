@@ -262,6 +262,14 @@ td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
           return grouped(cats.map((c) => ({ name: c.replace("_", " "), get: (k) => (k === "agent" ? a : h)[c] ?? 0 })), ["agent", "human"], pct, "Review comment categories")
             + `<p class="sub" style="margin-top:10px">Steering comments (instructions to an agent) per agent PR: <b>${num(g.agent.steering_per_pr)}</b></p>`;
         })()),
+      card("Features", "Jira epics and Linear projects, with the agent's share of the merged code. Lead time runs from the first commit to the last merge or the tracker's done date.",
+        (() => {
+          const f = b.features || {};
+          if (!f.features) return `<div class="empty">No linked features yet: configure functionality.jira or functionality.linear.</div>`;
+          const head = `<p class="sub">${num(f.done)} of ${num(f.features)} done · agent-led ${num(f.agent_led_done)}, human-led ${num(f.human_led_done)} · median lead time ${num(f.median_lead_time_days_agent)} days (agent) and ${num(f.median_lead_time_days_human)} (human)${f.spend_per_agent_led_feature != null ? ` · $${f.spend_per_agent_led_feature.toFixed(2)} per agent-led feature` : ""}</p>`;
+          const list = (f.list || []).slice(0, 10).map((r) => `<tr><td>${esc(r.feature)}</td><td class="title">${r.restricted ? '<span class="muted">restricted</span>' : esc(r.title)}</td><td class="n">${num(r.merged_prs)}/${num(r.prs)}</td><td class="n">${pct(r.agent_share)}</td><td class="n">${r.lead_time_days == null ? "–" : `${r.lead_time_days}d`}</td><td>${r.done ? "done" : "open"}</td></tr>`).join("");
+          return head + (list ? `<div class="wrap"><table><thead><tr><th>Feature</th><th>Title</th><th class="n">PRs merged</th><th class="n">Agent share</th><th class="n">Lead time</th><th>State</th></tr></thead><tbody>${list}</tbody></table></div>` : "");
+        })(), true),
       card("Agent against human, matched", `Human PRs reweighted to the same repositories and sizes as ${m.agent_prs_matched ?? 0} of ${m.agent_prs ?? 0} agent PRs.`,
         matchedRows ? `<div class="wrap"><table><thead><tr><th>Metric</th><th class="n">Agent</th><th class="n">Human</th></tr></thead><tbody>${matchedRows}</tbody></table></div>` : `<div class="empty">Not enough comparable work yet.</div>`),
     ].join("");
@@ -281,6 +289,8 @@ td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
     ["New code-scanning findings per PR", "scan_alerts_per_pr", num], ["Code still alive after 30+ days", "code_survival", pct],
     ["Hours from first commit to production (median)", "median_hours_to_production", hrs],
     ["Review comments per PR", "review_comments_per_pr", num], ["Steering comments per PR", "steering_per_pr", num],
+    ["Agent spend (allocated)", "agent_spend_usd", (v) => v == null ? "–" : `$${v.toFixed(2)}`],
+    ["Spend per merged PR", "spend_per_merged_pr", (v) => v == null ? "–" : `$${v.toFixed(2)}`],
   ];
   function table(b) {
     const g = b.groups;

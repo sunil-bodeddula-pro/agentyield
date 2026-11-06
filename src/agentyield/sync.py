@@ -24,6 +24,7 @@ from .guardrails import Filter
 from .quality import add_ci, add_scanning, sync_deployments
 from .review import Classifier, classifier_for
 from .store import Store
+from .trackers import Tracker, fetch, trackers_from
 
 DEFAULT_BACKFILL_DAYS = 180
 
@@ -53,6 +54,7 @@ class Syncer:
         self.agents: dict[str, AgentRule] = cfg.agents()
         self._cursor: dict[str, Any] = {}
         self._classifier: Classifier | None = None
+        self._trackers: list[Tracker] | None = None
 
     def cursor_path(self, repo: str) -> str:
         return f"{self.store.repo_dir(repo)}/cursor.json"
@@ -106,7 +108,10 @@ class Syncer:
     def _store_pr(self, spec: RepoSpec, number: int, res: RepoResult) -> None:
         detail = self.gh.pull(spec.name, number)
         timeline = self.gh.timeline(spec.name, number)
-        record = build_record(spec.name, detail, timeline, self.flt, self.agents, spec.restricted)
+        trackers = self.trackers()
+        prefixes = {p for t in trackers for p in t.prefixes}
+        record = build_record(spec.name, detail, timeline, self.flt, self.agents, spec.restricted, prefixes)
+        self._tracker_issues(record["issue_keys"], trackers)
         old = self.store.read(self.store.pr_path(spec.name, number), {}) or {}
         self._files(spec, record)
         self._line_counts(spec, record)
@@ -154,6 +159,29 @@ class Syncer:
                 "type": ((issue.get("type") or {}).get("name") or "") if isinstance(issue.get("type"), dict) else "",
             },
         )
+
+    def trackers(self) -> list[Tracker]:
+        if self._trackers is None:
+            self._trackers = trackers_from(self.cfg.section("functionality"))
+        return self._trackers
+
+    def _tracker_issues(self, keys: list[str], trackers: list[Tracker]) -> None:
+        """Fetch linked tracker issues through the cache, and each one's epic when that is another issue."""
+        for key in keys:
+            tracker = next((t for t in trackers if key.split("-")[0] in t.prefixes), None)
+            if tracker is None:
+                continue
+            issue = self._tracker_issue(tracker, key)
+            feature = (issue or {}).get("feature", "")
+            if feature and feature != key and not feature.startswith("project:"):
+                self._tracker_issue(tracker, feature)
+
+    def _tracker_issue(self, tracker: Tracker, key: str) -> dict[str, Any] | None:
+        path = f"trackers/{tracker.system}/{key}.json"
+        issue = fetch(tracker, key, self.store.read(path), self.flt)
+        if issue:
+            self.store.write(path, issue)
+        return issue
 
     def classifier(self) -> Classifier:
         if self._classifier is None:

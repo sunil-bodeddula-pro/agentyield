@@ -6,7 +6,7 @@
 
 It runs on a laptop or a remote machine, with no database: data lives in JSON files in a folder or a `gs://` / `s3://` bucket.
 
-> **Status: early development.** Batches 1 to 6 of 9 are done: configuration, GitHub sync, the sensitive-data filter, attribution, the metrics engine, the dashboard with GitHub sign-in, quality signals, and the review-comment classifier. See the [roadmap](docs/ROADMAP.md).
+> **Status: early development.** Batches 1 to 7 of 9 are done: configuration, GitHub sync, the sensitive-data filter, attribution, the metrics engine, the dashboard with GitHub sign-in, quality signals, the review-comment classifier, and features and spend. See the [roadmap](docs/ROADMAP.md).
 
 ## What works today
 
@@ -41,6 +41,41 @@ review:
 Comment text is filtered before any classifier sees it and dropped afterwards; only the category is stored (and a short filtered excerpt if `guardrails.comment_excerpts` is on). Comments already classified aren't sent again. If the classifier is down, sync carries on and the comments are classified next time.
 
 **Accuracy:** `agentyield classifier eval` measures exact-match accuracy, per-category recall and precision, and the most common mix-ups, and the admin view shows the result. The built-in rules score 76% (85 of 112) on the bundled sample, but that sample was written by the same authors as the rules, so treat it as a smoke test. For a number that holds for your team, label 100 or so of your own comments as JSONL (`{"text": "...", "label": "tests"}`) and run `agentyield classifier eval --sample yours.jsonl`.
+
+## Features from Jira and Linear
+
+PRs are linked to tracker issues by their keys (`CHK-12`, `ENG-7`) in the title, branch name or description, for the project or team prefixes you list. Each feature (a Jira epic, or a Linear project) then shows its PRs, the agent's share of its merged code, whether agents or people led it, whether it's done, and its lead time from first commit to the last merge or the tracker's done date.
+
+```yaml
+functionality:
+  jira:
+    base_url: https://acme.atlassian.net    # reads JIRA_EMAIL and JIRA_API_TOKEN
+    projects: [CHK, PAY]
+    feature: epic                           # or: parent
+  linear:
+    teams: [ENG]                            # reads LINEAR_API_KEY
+    feature: project                        # or: parent
+```
+
+Only each issue's key, type, state, dates, parent or project, and filtered title and labels are stored; descriptions and comments are never fetched. Done issues are cached; open ones are re-read at most every six hours. Static copies carry feature totals but no titles.
+
+## Spend (optional)
+
+Agent spend per merged PR and per feature, from any tool:
+
+```yaml
+cost:
+  sources:
+    - type: file                 # any vendor: CSV or JSONL with date, person, amount_usd[, tool]
+      path: spend.csv
+    - type: claude_code          # one built-in connector: Claude Code Analytics Admin API
+      admin_key_env: ANTHROPIC_ADMIN_KEY
+  people:                        # map emails in the sources to GitHub logins
+    - person: jane@acme.com
+      login: jane-gh
+```
+
+A person's spend on a day is shared equally across the agent and assisted PRs they authored that had commits that day (or were open that day); anything that can't be matched is reported as unallocated rather than guessed. Daily spend per person is never stored: only the per-PR allocations and unallocated daily totals are, and the people map (with its emails) stays in the live config, never in the store. Tools without a per-use cost, such as seat-based subscriptions, can be included by exporting their cost per person per day to the file.
 
 ## Dashboard
 

@@ -356,10 +356,14 @@ def build_site(store: Store, out_dir: str) -> list[str]:
     """The static dashboard: the page plus totals for every scope. No PR list, no titles: a static file can't
     check who is reading it."""
     data = store.read(SUMMARY) or {}
+    scopes = {}
+    for name, block in (data.get("scopes") or {}).items():  # feature lists carry titles: totals only here
+        feats = {k: v for k, v in (block.get("features") or {}).items() if k != "list"}
+        scopes[name] = {**block, "features": feats}
     shared = {
         "built_at": data.get("built_at"),
         "min_sample": data.get("min_sample"),
-        "scopes": data.get("scopes") or {},
+        "scopes": scopes,
         "mode": "static",
     }
     os.makedirs(os.path.join(out_dir, "data"), exist_ok=True)

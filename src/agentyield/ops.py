@@ -16,19 +16,25 @@ from typing import Any
 import yaml
 
 from .config import Config, RepoSpec
-from .derive import attribution_path, recompute
+from .derive import attribution_path, recompute_with_cost
 from .store import Store
 from .sync import DEFAULT_BACKFILL_DAYS, RepoResult, Syncer, days_ago, iso
 
 
 def stored_copy(cfg: Config) -> str:
-    """The applied config as kept in the store. Deny terms are left out: they are the very names the filter
-    removes, and the store may be a shared bucket. `sync` takes them from the live config file instead."""
+    """The applied config as kept in the store. Deny terms and the cost people map (emails) are left out: the
+    store may be a shared bucket. `sync` takes both from the live config file instead."""
     data = json.loads(json.dumps(cfg.data, default=str))
     g = data.get("guardrails") or {}
     if g.get("deny_terms"):
         g["deny_terms"] = []
-    header = f"# Applied config {cfg.hash} from {safe_source(cfg)}. Deny terms are not stored here.\n"
+    c = data.get("cost") or {}
+    if c.get("people"):
+        c["people"] = []
+    header = (
+        f"# Applied config {cfg.hash} from {safe_source(cfg)}. "
+        "Deny terms and the cost people map are not stored here.\n"
+    )
     return header + yaml.safe_dump(data, sort_keys=False)
 
 
@@ -133,7 +139,7 @@ def apply(
                 "errors": [f"{r.repo}: {r.error}" for r in results if r.error],
             }
         store.save_manifest(manifest)
-        recompute(store, cfg, resolved)
+        recompute_with_cost(store, cfg, resolved)
         return changes, results
     finally:
         store.release()

@@ -267,7 +267,51 @@ SCHEMA = Obj(
                 "issue_tracker": Enum(("github", "jira", "linear")),
                 "feature_labels": TEXTS,
                 "user_facing_types": List(Str("Conventional commit type, e.g. feat or fix")),
+                "jira": Obj(
+                    required=("base_url", "projects"),
+                    fields={
+                        "base_url": Str("e.g. https://acme.atlassian.net"),
+                        "email_env": Str("Environment variable with the Jira account email"),
+                        "token_env": Str("Environment variable with the Jira API token"),
+                        "projects": List(Str("Project key whose issue keys appear in PRs, e.g. CHK")),
+                        "feature": Enum(("epic", "parent")),
+                    },
+                ),
+                "linear": Obj(
+                    required=("teams",),
+                    fields={
+                        "api_key_env": Str("Environment variable with a Linear API key"),
+                        "teams": List(Str("Team key whose issue IDs appear in PRs, e.g. ENG")),
+                        "feature": Enum(("project", "parent")),
+                        "api_url": Str("GraphQL endpoint; change only for testing"),
+                    },
+                ),
             }
+        ),
+        "cost": Obj(
+            {
+                "sources": List(
+                    Obj(
+                        required=("type",),
+                        fields={
+                            "type": Enum(("file", "claude_code")),
+                            "path": Str("For file: CSV or JSONL with date, person, amount_usd[, tool]"),
+                            "admin_key_env": Str("For claude_code: environment variable with an Admin API key"),
+                            "api_url": Str("For claude_code: change only for testing"),
+                        },
+                    )
+                ),
+                "people": List(
+                    Obj(
+                        required=("person", "login"),
+                        fields={
+                            "person": Str("Email or name as it appears in the cost source"),
+                            "login": Str("Their GitHub login"),
+                        },
+                    )
+                ),
+            },
+            description="Optional: agent spend per merged PR and per feature, from any tool",
         ),
         "metrics": Obj(
             {

@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .guardrails import Filter
+from .trackers import extract_keys
 
 CONVENTIONAL = re.compile(r"^(\w+)(?:\([^)]*\))?!?:\s")
 CLOSES = re.compile(r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?\s+(?:([\w.-]+/[\w.-]+))?#(\d+)", re.I)
@@ -151,6 +152,7 @@ def build_record(
     flt: Filter,
     agents: dict[str, AgentRule],
     repo_restricted: bool,
+    issue_prefixes: set[str] | None = None,
 ) -> dict[str, Any]:
     author = (pr.get("user") or {}).get("login", "")
     raw_commits = [ev for ev in timeline if ev.get("event") == "committed"]
@@ -228,6 +230,10 @@ def build_record(
         "redacted": sorted(set(t_found + b_found + l_found)),
         # read from the description here and kept as numbers only; the description itself is dropped
         "closes": closing_issues(repo, pr.get("body") or ""),
+        "issue_keys": extract_keys(
+            [pr.get("title") or "", (pr.get("head") or {}).get("ref") or "", pr.get("body") or ""],
+            issue_prefixes or set(),
+        ),
         "reverts": reverted_pr(repo, pr.get("title") or "", pr.get("body") or ""),
         "title_type": _title_type(pr.get("title") or ""),
     }

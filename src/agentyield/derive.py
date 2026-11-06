@@ -9,12 +9,14 @@ sync and config apply) with no GitHub calls.
 
 from __future__ import annotations
 
+import os
 from collections import Counter
 from datetime import UTC, datetime
 from typing import Any
 
 from .attribution import DEFAULT_IGNORED, DEFAULT_THRESHOLD, LABELS, attribute
 from .config import Config, RepoSpec
+from .cost import allocate, gather
 from .guardrails import Filter
 from .metrics import Settings, pr_metrics, rollup
 from .store import Store
@@ -27,6 +29,41 @@ def metrics_path(repo: str) -> str:
 
 
 SUMMARY = "derived/metrics/summary.json"
+COST = "derived/cost.json"
+
+
+def recompute_with_cost(store: Store, cfg: Config, repos: dict[str, RepoSpec]) -> None:
+    """Recompute, then allocate spend (which needs the attribution just computed) and recompute the metrics."""
+    recompute(store, cfg, repos)
+    base = "" if "://" in cfg.source else os.path.dirname(os.path.abspath(os.path.expanduser(cfg.source)))
+    if refresh_cost(store, cfg, repos, base) is not None:
+        recompute(store, cfg, repos)
+
+
+def tracker_issues(store: Store) -> dict[str, dict[str, Any]]:
+    out: dict[str, dict[str, Any]] = {}
+    for rel in store.files("trackers/"):
+        issue = store.read(rel)
+        if issue:
+            out[issue["key"]] = issue
+    return out
+
+
+def refresh_cost(store: Store, cfg: Config, repos: dict[str, RepoSpec], base_dir: str = "") -> dict[str, Any] | None:
+    """Fetch spend for the history in the store, allocate it to agent PRs, and keep only the allocations."""
+    cost_cfg = cfg.section("cost")
+    if not cost_cfg.get("sources"):
+        return None
+    rows: list[dict[str, Any]] = []
+    for spec in repos.values():
+        rows.extend((store.read(metrics_path(spec.name), {}) or {}).get("prs") or [])
+    starts = [r["first_commit_at"][:10] for r in rows if r.get("first_commit_at")]
+    if not starts:
+        return None
+    since = datetime.fromisoformat(min(starts)).date()
+    result = allocate(gather(cost_cfg, since, datetime.now(UTC).date(), base_dir), rows)
+    store.write(COST, result)
+    return result
 
 
 def metric_settings(cfg: Config) -> Settings:
@@ -40,8 +77,10 @@ def write_pr_metrics(store: Store, cfg: Config, spec: RepoSpec, attributions: di
     issues = {int(i["number"]): i for i in (store.read(rel) for rel in store.files(f"{base}/issues/")) if i}
     releases = (store.read(f"{base}/releases.json", {}) or {}).get("releases") or []
     deployments = (store.read(f"{base}/deployments.json", {}) or {}).get("deployments") or []
+    trackers = tracker_issues(store)
+    costs = (store.read(COST, {}) or {}).get("per_pr") or {}
     rows = [
-        pr_metrics(rec, attributions[str(n)], facts, issues, releases, s, deployments)
+        pr_metrics(rec, attributions[str(n)], facts, issues, releases, s, deployments, trackers, costs)
         for n, rec in sorted(facts.items())
         if str(n) in attributions
     ]
@@ -64,7 +103,16 @@ def write_rollup(store: Store, cfg: Config, now: datetime | None = None) -> dict
         "config": cfg.hash,
         "built_at": when.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "min_sample": s.min_sample,
-        "scopes": rollup(rows, s.min_sample, when, deployments=deployments, teams=teams),
+        "scopes": rollup(
+            rows,
+            s.min_sample,
+            when,
+            deployments=deployments,
+            teams=teams,
+            tracker_issues=tracker_issues(store),
+            threshold=settings(cfg)[0],
+        ),
+        "cost": {k: v for k, v in (store.read(COST, {}) or {}).items() if k in ("total_usd", "unallocated_usd")},
     }
     store.write(SUMMARY, data)
     return data

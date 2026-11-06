@@ -148,6 +148,8 @@ def pr_metrics(
     releases: list[dict[str, Any]],
     s: Settings,
     deployments: list[dict[str, Any]] | None = None,
+    tracker_issues: dict[str, dict[str, Any]] | None = None,
+    costs: dict[str, float] | None = None,
 ) -> dict[str, Any]:
     created, ready = parse_ts(rec.get("created_at")), parse_ts(rec.get("ready_at") or rec.get("created_at"))
     first_review, merged = parse_ts(rec.get("first_review_at")), parse_ts(rec.get("merged_at"))
@@ -224,6 +226,27 @@ def pr_metrics(
         else None,
         **quality_metrics(rec, merged, deployments or []),
         **review_metrics(rec),
+        **link_metrics(rec, tracker_issues or {}, costs or {}),
+    }
+
+
+def link_metrics(
+    rec: dict[str, Any], tracker_issues: dict[str, dict[str, Any]], costs: dict[str, float]
+) -> dict[str, Any]:
+    """Who, when, which tracker features, and allocated agent spend: what feature and cost rollups need."""
+    keys = list(rec.get("issue_keys") or [])
+    features = sorted({f for k in keys if (f := (tracker_issues.get(k) or {}).get("feature"))})
+    commit_times = sorted(c["at"] for c in rec.get("commits") or [] if c.get("at"))
+    return {
+        "author": rec.get("author", ""),
+        "created_at": rec.get("created_at"),
+        "merged_at": rec.get("merged_at"),
+        "closed_at": rec.get("closed_at"),
+        "first_commit_at": commit_times[0] if commit_times else rec.get("created_at"),
+        "commit_days": sorted({t[:10] for t in commit_times}),
+        "issue_keys": keys,
+        "features": features,
+        "cost_usd": costs.get(f"{rec.get('repo')}#{rec.get('number')}"),
     }
 
 
@@ -332,6 +355,7 @@ def summarize(prs: list[dict[str, Any]], min_sample: int) -> dict[str, Any]:
         "median_hours_to_release": _median(p["hours_to_release"] for p in merged),
         **summarize_quality(prs, merged, gated),
         **summarize_review(prs, gated),
+        **summarize_spend(prs, merged, gated),
         "small_sample": small,
     }
     return out
@@ -379,6 +403,86 @@ def summarize_review(prs: list[dict[str, Any]], gated: Any) -> dict[str, Any]:
         "steering_per_pr": gated(_rate(sum(p["steering_comments"] for p in reviewed), len(reviewed)), len(reviewed)),
         "review_categories": dict(sorted(total.items(), key=lambda kv: -kv[1])),
         "review_category_share": {k: round(v / comments, 3) for k, v in total.items()} if comments else {},
+    }
+
+
+def summarize_spend(prs: list[dict[str, Any]], merged: list[dict[str, Any]], gated: Any) -> dict[str, Any]:
+    costed = [p for p in prs if p.get("cost_usd") is not None]
+    merged_costed = [p for p in merged if p.get("cost_usd") is not None]
+    return {
+        "agent_spend_usd": round(sum(p["cost_usd"] for p in costed), 2) if costed else None,
+        "spend_per_merged_pr": gated(
+            round(sum(p["cost_usd"] for p in merged_costed) / len(merged_costed), 2) if merged_costed else None,
+            len(merged_costed),
+        ),
+    }
+
+
+def features(
+    prs: list[dict[str, Any]], tracker_issues: dict[str, dict[str, Any]], threshold: float = 0.5
+) -> list[dict[str, Any]]:
+    """One row per tracker feature: its PRs, agent share of the merged code, spend, done or not, and lead time
+    (first commit of its first PR to the last merge, or the tracker's done date when that's later)."""
+    by: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for p in prs:
+        for f in p.get("features") or []:
+            by[f].append(p)
+    rows = []
+    for fid, sel in by.items():
+        info = tracker_issues.get(fid) or {}
+        titles = [tracker_issues.get(k, {}).get("feature_title") for p in sel for k in p.get("issue_keys") or []]
+        merged = [p for p in sel if p["merged"]]
+        lines = sum(p["lines"] for p in merged)
+        agent = sum(p["agent_lines"] for p in merged)
+        share = round(agent / lines, 3) if lines else None
+        starts = [t for t in (parse_ts(p.get("first_commit_at")) for p in sel) if t]
+        ends = [t for t in (parse_ts(p.get("merged_at")) for p in merged) if t]
+        done_at = parse_ts(info.get("done_at"))
+        all_merged = bool(sel) and all(p["merged"] or p["closed_unmerged"] for p in sel) and bool(merged)
+        done = bool(info.get("done")) if info else all_merged
+        end = max([*ends, *([done_at] if done_at else [])]) if (ends or done_at) else None
+        costs = [p["cost_usd"] for p in sel if p.get("cost_usd") is not None]
+        rows.append(
+            {
+                "feature": fid,
+                "title": info.get("title") or next((t for t in titles if t), ""),
+                "restricted": bool(info.get("restricted")),
+                "repos": sorted({p["repo"] for p in sel}),
+                "teams": sorted({p["team"] for p in sel if p["team"]}),
+                "prs": len(sel),
+                "merged_prs": len(merged),
+                "lines": lines,
+                "agent_share": share,
+                "led_by": "agent" if share is not None and share >= threshold else "human",
+                "done": done,
+                "done_week": week_of(end) if done and end else None,
+                "lead_time_days": round((end - min(starts)).total_seconds() / 86400, 1)
+                if done and end and starts
+                else None,
+                "spend_usd": round(sum(costs), 2) if costs else None,
+            }
+        )
+    return sorted(rows, key=lambda r: (not r["done"], -(r["lines"] or 0)))
+
+
+def feature_summary(rows: list[dict[str, Any]], min_sample: int) -> dict[str, Any]:
+    done = [r for r in rows if r["done"]]
+
+    def med(sel: list[dict[str, Any]]) -> float | None:
+        vals = [r["lead_time_days"] for r in sel if r["lead_time_days"] is not None]
+        return round(statistics.median(vals), 1) if len(vals) >= min_sample and vals else None
+
+    agent_done = [r for r in done if r["led_by"] == "agent"]
+    human_done = [r for r in done if r["led_by"] == "human"]
+    spent = [r["spend_usd"] for r in done if r["spend_usd"] is not None and r["led_by"] == "agent"]
+    return {
+        "features": len(rows),
+        "done": len(done),
+        "agent_led_done": len(agent_done),
+        "human_led_done": len(human_done),
+        "median_lead_time_days_agent": med(agent_done),
+        "median_lead_time_days_human": med(human_done),
+        "spend_per_agent_led_feature": round(sum(spent) / len(spent), 2) if spent else None,
     }
 
 
@@ -462,6 +566,8 @@ def rollup(
     n_weeks: int = 12,
     deployments: dict[str, list[dict[str, Any]]] | None = None,
     teams: dict[str, str] | None = None,
+    tracker_issues: dict[str, dict[str, Any]] | None = None,
+    threshold: float = 0.5,
 ) -> dict[str, Any]:
     counted = [p for p in prs if p["group"] != "excluded"]
     scopes: dict[str, list[dict[str, Any]]] = {"org": counted}
@@ -487,6 +593,10 @@ def rollup(
             "weekly": trend,
             "change": change(sel, now),
             "delivery": delivery(mine, min_sample),
+            "features": {
+                **feature_summary(feats := features(sel, tracker_issues or {}, threshold), min_sample),
+                "list": feats[:50],
+            },
         }
     return out
 
