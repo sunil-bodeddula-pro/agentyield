@@ -18,6 +18,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
 TOKEN = "test-token-not-a-secret"
+REVIEW_IDS = iter(range(1000, 10_000_000))
 
 PLANTED = {
     "github_token": "ghp_" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8",
@@ -53,6 +54,7 @@ class Org:
         self.pr_files: dict[tuple[str, int], list[dict[str, Any]]] = {}
         self.issues: dict[tuple[str, int], dict[str, Any]] = {}
         self.releases: dict[str, list[dict[str, Any]]] = {}
+        self.inline: dict[tuple[str, int], list[dict[str, Any]]] = {}
         self.checks: dict[str, str] = {}  # sha -> "pass" | "fail" (no entry: no CI)
         self.coverage: dict[str, str] = {}  # sha -> codecov/patch description
         self.scanning: dict[tuple[str, int], list[dict[str, Any]]] = {}
@@ -129,6 +131,7 @@ class Org:
     def review(at: datetime, state: str, login: str = "bob", bot: bool = False) -> dict[str, Any]:
         return {
             "event": "reviewed",
+            "id": next(REVIEW_IDS),
             "state": state,
             "submitted_at": ts(at),
             "body": PLANTED["review"],
@@ -203,6 +206,26 @@ class Org:
                 {"state": "success", "created_at": ts(dep_at + h)},
             ],
         }
+
+        # Inline review comments on PR 1: correctness twice, a test request, a steering comment, one from an AI
+        # review bot, and a reply from the author (not a review). One carries a planted secret.
+        def inline(i: int, body: str, login: str = "bob", bot: bool = False) -> dict[str, Any]:
+            return {
+                "id": 500 + i,
+                "body": body,
+                "user": {"login": login, "type": "Bot" if bot else "User"},
+                "created_at": ts(d + 3 * h),
+                "updated_at": ts(d + 3 * h),
+            }
+
+        self.inline[("acme/checkout-service", 1)] = [
+            inline(1, "This returns the wrong total when the cart is empty."),
+            inline(2, f"Edge case: what if the key is reused? Also {PLANTED['github_token']} is in the fixture."),
+            inline(3, "Please add a test for the replay case."),
+            inline(4, "@claude rebase on main and fix the conflicts"),
+            inline(5, "Consider extracting this into a helper.", "review-ai[bot]", bot=True),
+            inline(6, "Done, thanks!", "alice"),
+        ]
         # PR 2: human, secrets in title and branch, deny term.
         self.add_pr(
             cs,
@@ -410,6 +433,9 @@ class FakeGitHub:
             return (304, None, {"ETag": tag}) if etag == tag else (200, body, {"ETag": tag})
         if rest[0] == "issues" and len(rest) == 2:
             return 200, org.issues[(repo, int(rest[1]))], {}
+        if rest[0] == "pulls" and rest[2:] == ["comments"]:
+            chunk, extra = self._page(org.inline.get((repo, int(rest[1])), []), q, path)
+            return 200, chunk, extra
         if rest[0] == "pulls" and rest[2:] == ["files"]:
             default = [{"filename": "src/app.py", "additions": 40, "deletions": 10}]
             chunk, extra = self._page(org.pr_files.get((repo, int(rest[1])), default), q, path)

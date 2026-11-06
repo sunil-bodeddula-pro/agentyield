@@ -26,6 +26,7 @@ dependencies = ["PyYAML>=6.0", "tzdata; sys_platform == 'win32'"]  # Windows has
 [project.optional-dependencies]
 gcs = ["google-cloud-storage>=2.10"]
 s3 = ["boto3>=1.28"]
+anthropic = ["anthropic>=1.0"]
 dev = ["ruff>=0.17", "mypy>=2.4", "types-PyYAML"]
 
 [project.urls]
@@ -41,7 +42,7 @@ version = { attr = "agentyield.__version__" }
 where = ["src"]
 
 [tool.setuptools.package-data]
-agentyield = ["static/*.html"]
+agentyield = ["static/*.html", "data/*.jsonl"]
 
 [tool.ruff]
 line-length = 120
@@ -62,5 +63,5 @@ strict = true
 warn_unreachable = true
 
 [[tool.mypy.overrides]]
-module = ["google.*", "boto3.*", "botocore.*"]
+module = ["google.*", "boto3.*", "botocore.*", "anthropic.*"]
 ignore_missing_imports = true

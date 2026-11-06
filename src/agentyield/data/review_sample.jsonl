@@ -1,0 +1,112 @@
+{"text": "This returns the total before the discount is applied, so customers are charged the full price.", "label": "correctness"}
+{"text": "What happens when the list is empty? `items[0]` will throw here.", "label": "correctness"}
+{"text": "The loop stops one element early; the last order is never processed.", "label": "correctness"}
+{"text": "I think this condition is inverted: we want to skip archived accounts, not only include them.", "label": "correctness"}
+{"text": "This breaks when the currency has no minor units, like JPY.", "label": "correctness"}
+{"text": "`parse_date` assumes UTC but the upstream API sends local time, so the dates will be a day off.", "label": "correctness"}
+{"text": "The retry counter is reset inside the loop, so it never actually gives up.", "label": "correctness"}
+{"text": "If `user` is None we fall through and call `user.id`.", "label": "correctness"}
+{"text": "Why does this PR also rewrite the billing page? That wasn't part of the ticket.", "label": "scope"}
+{"text": "Please split the logging changes into a separate PR; they're unrelated to the fix.", "label": "scope"}
+{"text": "We didn't ask for a CSV export here, can you drop it from this change?", "label": "scope"}
+{"text": "This touches 40 files for a one-line config fix. Can we keep it focused?", "label": "scope"}
+{"text": "The renaming across the whole module is out of scope for this bug fix.", "label": "scope"}
+{"text": "There's already an open PR doing the same thing (#812). Let's close one of them.", "label": "scope"}
+{"text": "Please revert the changes to settings.py, they aren't needed for this feature.", "label": "scope"}
+{"text": "This adds a new admin endpoint nobody requested.", "label": "scope"}
+{"text": "We already have a `format_money` helper in utils, please reuse it instead of a new one.", "label": "design"}
+{"text": "This class is doing parsing, validation and persistence. Could we split it up?", "label": "design"}
+{"text": "The same block appears three times now; let's extract a function.", "label": "design"}
+{"text": "Feels over-engineered for what it does; a plain dict would be enough here.", "label": "design"}
+{"text": "I'd rather the controller didn't talk to the database directly. Go through the repository layer.", "label": "design"}
+{"text": "Can we simplify this? The strategy pattern seems like a lot for two cases.", "label": "design"}
+{"text": "This duplicates the logic in OrderService.calculate. Can it call that instead?", "label": "design"}
+{"text": "The new abstraction leaks HTTP details into the domain model.", "label": "design"}
+{"text": "This swallows every exception and returns an empty list; we'll never know the payment provider is down.", "label": "error_handling"}
+{"text": "What if the request times out? There's no timeout set on this call.", "label": "error_handling"}
+{"text": "Please handle the 429 response and retry with backoff.", "label": "error_handling"}
+{"text": "If the file is missing this crashes with a stack trace. Show a clear message instead.", "label": "error_handling"}
+{"text": "The `except Exception: pass` hides real failures. Catch the specific error.", "label": "error_handling"}
+{"text": "We should fall back to the cached rates when the FX service fails.", "label": "error_handling"}
+{"text": "This error is logged but the function still returns success to the caller.", "label": "error_handling"}
+{"text": "Unhandled promise rejection here if the fetch fails.", "label": "error_handling"}
+{"text": "This builds the SQL string from user input. Please use a parameterised query.", "label": "security"}
+{"text": "The API key is hard-coded in the test config; it'll end up in the repo history.", "label": "security"}
+{"text": "Anyone can call this endpoint; there's no check that the user owns the invoice.", "label": "security"}
+{"text": "We render the comment body as raw HTML, which is an XSS hole.", "label": "security"}
+{"text": "Don't log the full request; it contains the customer's password.", "label": "security"}
+{"text": "This version of the yaml library has a known CVE. Please bump it.", "label": "security"}
+{"text": "The token is compared with ==, which allows a timing attack. Use a constant-time compare.", "label": "security"}
+{"text": "File paths come from the request and aren't sanitized, so ../ gets you anywhere on disk.", "label": "security"}
+{"text": "This runs one query per order inside the loop; that's N+1 on the dashboard page.", "label": "performance"}
+{"text": "We re-read the whole config file on every request. Cache it.", "label": "performance"}
+{"text": "Sorting inside the loop makes this quadratic for large carts.", "label": "performance"}
+{"text": "This loads every row into memory before filtering. Push the filter into the query.", "label": "performance"}
+{"text": "Could we batch these API calls? We make 200 requests to render one page.", "label": "performance"}
+{"text": "The regex is compiled on each call; move it to module level.", "label": "performance"}
+{"text": "This copies the whole image buffer twice, which is expensive for large uploads.", "label": "performance"}
+{"text": "Latency on this endpoint went from 80ms to 900ms with this change.", "label": "performance"}
+{"text": "Two workers can pick up the same job here; there's a race between the check and the update.", "label": "concurrency"}
+{"text": "This shared dict is mutated from multiple threads without a lock.", "label": "concurrency"}
+{"text": "The `await` is missing, so the write may not finish before we respond.", "label": "concurrency"}
+{"text": "This could deadlock if both transfers lock the accounts in opposite order.", "label": "concurrency"}
+{"text": "The counter increment isn't atomic; use the database's increment instead.", "label": "concurrency"}
+{"text": "Events can arrive out of order, so we need to check the sequence number before applying.", "label": "concurrency"}
+{"text": "Running these migrations in parallel will fight over the same table lock.", "label": "concurrency"}
+{"text": "This async function is called without being awaited in the cleanup handler.", "label": "concurrency"}
+{"text": "Please add a test for the empty-cart case.", "label": "tests"}
+{"text": "This test only asserts that no exception is raised; it doesn't check the result.", "label": "tests"}
+{"text": "The new branch isn't covered at all.", "label": "tests"}
+{"text": "You changed the expected value in the test to make it pass. Is the old value actually wrong?", "label": "tests"}
+{"text": "Can we mock the clock instead of sleeping for five seconds in the test?", "label": "tests"}
+{"text": "A regression test for the reported bug would help so it doesn't come back.", "label": "tests"}
+{"text": "These fixtures hit the real payment sandbox; please use the stub.", "label": "tests"}
+{"text": "The assertion compares floats exactly; use approx.", "label": "tests"}
+{"text": "Please add a docstring explaining what the return value means when nothing is found.", "label": "docs"}
+{"text": "The README still describes the old setup steps.", "label": "docs"}
+{"text": "Could you add a changelog entry for this?", "label": "docs"}
+{"text": "A comment explaining why we skip the first row would help the next reader.", "label": "docs"}
+{"text": "The log message just says 'error'. Include the order ID so we can find it.", "label": "docs"}
+{"text": "Document the new environment variable in the deployment guide.", "label": "docs"}
+{"text": "The API docs say this field is required but the code treats it as optional.", "label": "docs"}
+{"text": "Explain why this magic number is 37.", "label": "docs"}
+{"text": "nit: trailing whitespace", "label": "style"}
+{"text": "Typo: 'recieve' should be 'receive'.", "label": "style"}
+{"text": "Please rename `tmp2` to something meaningful.", "label": "style"}
+{"text": "We use snake_case for function names in this module.", "label": "style"}
+{"text": "nit: unused import of `os`.", "label": "style"}
+{"text": "Indentation is off in this block.", "label": "style"}
+{"text": "Can you run the formatter? The line lengths are all over the place.", "label": "style"}
+{"text": "Minor: `isValid` reads better than `checkValidFlag`.", "label": "style"}
+{"text": "The CI workflow now takes 25 minutes; can we cache the dependencies?", "label": "build_ci"}
+{"text": "This adds a new dependency just for left-padding. Do we need it?", "label": "build_ci"}
+{"text": "The Dockerfile installs dev tools in the production image.", "label": "build_ci"}
+{"text": "The build fails on the Windows runner after this change.", "label": "build_ci"}
+{"text": "Please pin the version in requirements.txt instead of using `>=`.", "label": "build_ci"}
+{"text": "The deploy pipeline needs the new environment variable or it will fail at startup.", "label": "build_ci"}
+{"text": "Why was the lint step removed from the pipeline?", "label": "build_ci"}
+{"text": "package.json and the lockfile are out of sync.", "label": "build_ci"}
+{"text": "We never return 200 with an error body in this API; use a 4xx status.", "label": "conventions"}
+{"text": "This is a breaking change for mobile clients on older versions.", "label": "conventions"}
+{"text": "New database columns must go through a migration, not a manual ALTER.", "label": "conventions"}
+{"text": "Please put this behind a feature flag like the other checkout experiments.", "label": "conventions"}
+{"text": "Our guidelines say public functions in this package take a context as the first argument.", "label": "conventions"}
+{"text": "Backwards compatibility: the old field name still needs to be accepted for one release.", "label": "conventions"}
+{"text": "We usually keep request validation in the schema layer, not in the handler.", "label": "conventions"}
+{"text": "Team rule: no direct calls to the payments service from the frontend.", "label": "conventions"}
+{"text": "@copilot please fix the failing tests and push again.", "label": "steering"}
+{"text": "@claude rebase this on main and resolve the conflicts.", "label": "steering"}
+{"text": "@codex address the review comments above.", "label": "steering"}
+{"text": "@devin can you also update the API client for this?", "label": "steering"}
+{"text": "/fix the lint errors", "label": "steering"}
+{"text": "@acme-agent split this into two PRs, one for the model and one for the API.", "label": "steering"}
+{"text": "@cursor rename the function as suggested and rerun the checks.", "label": "steering"}
+{"text": "@review-bot retry the build please", "label": "steering"}
+{"text": "LGTM, thanks!", "label": "other"}
+{"text": "Nice work, this is much easier to read.", "label": "other"}
+{"text": "Why did we pick 30 seconds for this? Just curious.", "label": "other"}
+{"text": "Thanks for picking this up.", "label": "other"}
+{"text": "Looks good to me once CI is green.", "label": "other"}
+{"text": "Is this related to the outage last week?", "label": "other"}
+{"text": "+1", "label": "other"}
+{"text": "Great find.", "label": "other"}

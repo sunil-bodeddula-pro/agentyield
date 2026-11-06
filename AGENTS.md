@@ -28,6 +28,7 @@ Run all of them before saying a change is done, and report the results honestly.
 | `src/agentyield/metrics.py` | Per-PR metrics, working hours, rollups, matched comparison, weekly trends |
 | `src/agentyield/web.py`, `static/dashboard.html` | Dashboard server, sign-in and access rules, static build; the page (vanilla JS, SVG charts) |
 | `src/agentyield/appauth.py` | GitHub App JWT (RS256) on the standard library |
+| `src/agentyield/review.py`, `data/review_sample.jsonl` | Review-comment classifier (rules, OpenAI-compatible, Anthropic) and its labelled sample |
 | `src/agentyield/quality.py`, `survival.py` | CI, coverage, code scanning and deployments at sync time; code survival with git blame on a local mirror |
 | `src/agentyield/ops.py` | `config diff` / `apply`, status |
 | `src/agentyield/store.py` | JSON file store and its folder, GCS and S3 backends; the writer lease |
@@ -37,6 +38,7 @@ Run all of them before saying a change is done, and report the results honestly.
 
 - **Privacy first.** Nothing reaches the store without passing `guardrails.Filter`. Never store PR bodies, commit messages, review text, emails or code. A new text field needs a filter call and a planted value in `tests/mockgh.py`.
 - **Leak tests must stay green.** `PLANTED` values must never appear in the store or command output. Add to them; never weaken them.
+- **Agent- and vendor-neutral.** Nothing may assume one agent or one model provider. Agent rules come from config; model-based features need a vendor-neutral path (`openai-compatible`) alongside any vendor SDK.
 - **Only configured repositories.** Never read a repository the config doesn't list or select.
 - **Read-only on GitHub.** No write calls.
 - **No new runtime dependencies** beyond PyYAML (and tzdata on Windows); cloud clients stay optional extras imported lazily.

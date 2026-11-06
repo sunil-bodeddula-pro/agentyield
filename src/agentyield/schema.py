@@ -302,6 +302,16 @@ SCHEMA = Obj(
                 "retention": Duration(),
             }
         ),
+        "review": Obj(
+            {
+                "classifier": Enum(("rules", "openai-compatible", "anthropic")),
+                "base_url": Str("For openai-compatible: the API base, e.g. http://localhost:11434/v1"),
+                "model": Str("Model name for openai-compatible or anthropic"),
+                "api_key_env": Str("Environment variable holding the API key, if the endpoint needs one"),
+                "sample": Str("Labelled JSONL ({text, label}) for `agentyield classifier eval`"),
+            },
+            description="How review comments are sorted into categories",
+        ),
         "outputs": Obj(
             {
                 "dashboard": Obj(

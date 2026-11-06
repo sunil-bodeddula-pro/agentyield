@@ -223,6 +223,21 @@ def pr_metrics(
         if release and merged
         else None,
         **quality_metrics(rec, merged, deployments or []),
+        **review_metrics(rec),
+    }
+
+
+def review_metrics(rec: dict[str, Any]) -> dict[str, Any]:
+    comments = [c for c in rec.get("review_comments") or [] if c.get("category") != "unclassified"]
+    cats: dict[str, int] = {}
+    for c in comments:
+        if c["category"] not in ("steering", "other"):
+            cats[c["category"]] = cats.get(c["category"], 0) + 1
+    return {
+        "review_comments": len([c for c in comments if c["category"] not in ("steering", "other")]),
+        "steering_comments": sum(1 for c in comments if c.get("steering") or c["category"] == "steering"),
+        "review_categories": cats,
+        "bot_review_comments": rec.get("bot_review_comments", 0),
     }
 
 
@@ -316,6 +331,7 @@ def summarize(prs: list[dict[str, Any]], min_sample: int) -> dict[str, Any]:
         "released": sum(1 for p in merged if p["release"]),
         "median_hours_to_release": _median(p["hours_to_release"] for p in merged),
         **summarize_quality(prs, merged, gated),
+        **summarize_review(prs, gated),
         "small_sample": small,
     }
     return out
@@ -345,6 +361,24 @@ def summarize_quality(prs: list[dict[str, Any]], merged: list[dict[str, Any]], g
             len(measured),
         ),
         "median_hours_to_production": gated(_median(p["hours_to_production"] for p in deployed), len(deployed)),
+    }
+
+
+def summarize_review(prs: list[dict[str, Any]], gated: Any) -> dict[str, Any]:
+    """What reviewers flag: comments per PR, steering per PR, and each category's share of review comments."""
+    reviewed = [p for p in prs if "review_comments" in p]
+    total: dict[str, int] = {}
+    for p in reviewed:
+        for cat, n in (p.get("review_categories") or {}).items():
+            total[cat] = total.get(cat, 0) + n
+    comments = sum(total.values())
+    return {
+        "review_comments_per_pr": gated(
+            _rate(sum(p["review_comments"] for p in reviewed), len(reviewed)), len(reviewed)
+        ),
+        "steering_per_pr": gated(_rate(sum(p["steering_comments"] for p in reviewed), len(reviewed)), len(reviewed)),
+        "review_categories": dict(sorted(total.items(), key=lambda kv: -kv[1])),
+        "review_category_share": {k: round(v / comments, 3) for k, v in total.items()} if comments else {},
     }
 
 

@@ -219,7 +219,17 @@ class Dashboard:
                     "low_confidence": attr.get("low_confidence", 0),
                 }
             )
+        ev = self.store.read("derived/classifier_eval.json") or {}
+        classifier = {
+            "name": str(self.cfg.section("review").get("classifier") or "rules"),
+            "accuracy": ev.get("accuracy"),
+            "sample": ev.get("sample"),
+            "sample_source": ev.get("sample_source"),
+            "measured_at": ev.get("measured_at"),
+            "measured_with": ev.get("classifier"),
+        }
         return {
+            "classifier": classifier,
             "last_sync": manifest.get("last_sync"),
             "config": (manifest.get("applied") or {}).get("hash"),
             "hidden": sorted(manifest.get("hidden", {})),

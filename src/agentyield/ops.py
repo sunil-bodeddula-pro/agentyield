@@ -37,6 +37,10 @@ def safe_source(cfg: Config) -> str:
     return cfg.filter().clean(cfg.source)[0] or "(local file)"
 
 
+def review_hash(cfg: Config) -> str:
+    return hashlib.sha256(json.dumps(cfg.data.get("review") or {}, sort_keys=True).encode()).hexdigest()[:16]
+
+
 def rules_hash(cfg: Config) -> str:
     parts = {k: cfg.data.get(k) for k in ("teams", "agents", "functionality", "metrics")}
     return hashlib.sha256(json.dumps(parts, sort_keys=True, default=str).encode()).hexdigest()[:16]
@@ -84,6 +88,8 @@ def diff(
             out.append(Change("remove", old["name"], "stop syncing and hide; data kept until `prune`"))
     if applied and applied.get("guardrails") != cfg.guardrail_fingerprint():
         out.append(Change("guardrails", "", "filter stored PRs again with the new rules"))
+    if applied and applied.get("review", review_hash(cfg)) != review_hash(cfg):
+        out.append(Change("classifier", "", "review comments not yet classified are classified with the new settings"))
     if applied and applied.get("rules") != rules_hash(cfg):
         out.append(Change("rules", "", "team, agent, functionality or metric rules changed; derived numbers rebuilt"))
     return out
@@ -117,6 +123,7 @@ def apply(
             "at": iso(datetime.now(UTC)),
             "guardrails": cfg.guardrail_fingerprint(),
             "rules": rules_hash(cfg),
+            "review": review_hash(cfg),
             "repos": snapshot(resolved),
         }
         if results:

@@ -2,9 +2,11 @@
 
 **How much code and functionality do your AI agents ship, how well does it hold up, and how fast does it reach production?** AgentYield reads your code host, works out which pull requests and lines an agent wrote, and compares them with human work in the same repositories: agent share of code, functionality shipped, effectiveness (merge rate, rework, reverts) and shipping speed.
 
+**It works with any agent.** AgentYield never talks to an agent or reads anyone's machine; it reads GitHub. Agent work is recognised from what agents leave there: bot accounts, commit co-author lines, branch prefixes, labels and PR markers. Rules for Claude Code, Copilot and Codex are built in, and any other agent (Cursor, Devin, Gemini, Amazon Q, Jules, your in-house bots) is one entry under `agents:`.
+
 It runs on a laptop or a remote machine, with no database: data lives in JSON files in a folder or a `gs://` / `s3://` bucket.
 
-> **Status: early development.** Batches 1 to 5 of 9 are done: configuration, GitHub sync, the sensitive-data filter, attribution, the metrics engine, the dashboard with GitHub sign-in, and quality signals. See the [roadmap](docs/ROADMAP.md).
+> **Status: early development.** Batches 1 to 6 of 9 are done: configuration, GitHub sync, the sensitive-data filter, attribution, the metrics engine, the dashboard with GitHub sign-in, quality signals, and the review-comment classifier. See the [roadmap](docs/ROADMAP.md).
 
 ## What works today
 
@@ -18,6 +20,27 @@ It runs on a laptop or a remote machine, with no database: data lives in JSON fi
 - `agentyield label set owner/repo#42 agent --agent claude-code --note "…"`: an admin correction that always wins and survives re-syncs (`label clear`, `label list`).
 - `agentyield recompute`: rebuilds the derived files from stored facts after a rule change, with no GitHub calls.
 - `agentyield metrics [--scope team:payments | repo:acme/app] [--json]`: the numbers below for agent, assisted and human work side by side, a matched comparison, and the last 4 weeks against the 4 before.
+
+## What reviewers flag
+
+Human review comments (not bots', not the PR author's replies) are sorted into categories: correctness, scope, design, error handling, security, performance, concurrency, tests, docs, style, build and CI, conventions, steering (instructions to an agent, such as "@copilot fix the tests") and other. The dashboard compares the share of each for agent and human PRs, so you can see what reviewers keep catching in agent work.
+
+| `review.classifier` | What it uses | Where comment text goes |
+| :--- | :--- | :--- |
+| `rules` (default) | Built-in keyword rules | Nowhere: classified in place |
+| `openai-compatible` | Any chat-completions endpoint: `base_url` and `model`, plus `api_key_env` if needed. Works with local servers (Ollama, vLLM, LM Studio) and hosted providers | To that endpoint, after filtering |
+| `anthropic` | Claude through Anthropic's SDK (`pip install 'agentyield[anthropic]'`) | To Anthropic under your account, after filtering |
+
+```yaml
+review:
+  classifier: openai-compatible
+  base_url: http://localhost:11434/v1   # e.g. Ollama's OpenAI-compatible API
+  model: qwen2.5:14b
+```
+
+Comment text is filtered before any classifier sees it and dropped afterwards; only the category is stored (and a short filtered excerpt if `guardrails.comment_excerpts` is on). Comments already classified aren't sent again. If the classifier is down, sync carries on and the comments are classified next time.
+
+**Accuracy:** `agentyield classifier eval` measures exact-match accuracy, per-category recall and precision, and the most common mix-ups, and the admin view shows the result. The built-in rules score 76% (85 of 112) on the bundled sample, but that sample was written by the same authors as the rules, so treat it as a smoke test. For a number that holds for your team, label 100 or so of your own comments as JSONL (`{"text": "...", "label": "tests"}`) and run `agentyield classifier eval --sample yours.jsonl`.
 
 ## Dashboard
 

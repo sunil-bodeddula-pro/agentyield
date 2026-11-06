@@ -185,6 +185,10 @@ class GitHub:
     def pull(self, repo: str, number: int) -> dict[str, Any]:
         return dict(self.get(f"/repos/{repo}/pulls/{number}").data)
 
+    def review_comments(self, repo: str, number: int) -> list[dict[str, Any]]:
+        """Inline review comments on a PR's diff."""
+        return list(self.paginate(f"/repos/{repo}/pulls/{number}/comments", {"per_page": 100}))
+
     def pull_files(self, repo: str, number: int) -> list[dict[str, Any]]:
         return list(self.paginate(f"/repos/{repo}/pulls/{number}/files", {"per_page": 100}))
 

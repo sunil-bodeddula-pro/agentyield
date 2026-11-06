@@ -22,6 +22,7 @@ from .facts import AgentRule, build_record
 from .github import GitHub, GitHubError
 from .guardrails import Filter
 from .quality import add_ci, add_scanning, sync_deployments
+from .review import Classifier, classifier_for
 from .store import Store
 
 DEFAULT_BACKFILL_DAYS = 180
@@ -51,6 +52,7 @@ class Syncer:
         self.flt: Filter = cfg.filter()
         self.agents: dict[str, AgentRule] = cfg.agents()
         self._cursor: dict[str, Any] = {}
+        self._classifier: Classifier | None = None
 
     def cursor_path(self, repo: str) -> str:
         return f"{self.store.repo_dir(repo)}/cursor.json"
@@ -110,6 +112,7 @@ class Syncer:
         self._line_counts(spec, record)
         add_ci(self.gh, spec.name, record, old, dict(self.cfg.section("metrics").get("coverage") or {}))
         add_scanning(self.gh, spec.name, record, self._cursor)
+        self._review_comments(spec, record, timeline, old)
         if old.get("survival") and old.get("merge_commit_sha") == record.get("merge_commit_sha"):
             record["survival"] = old["survival"]
         for n in record["closes"]:
@@ -151,6 +154,84 @@ class Syncer:
                 "type": ((issue.get("type") or {}).get("name") or "") if isinstance(issue.get("type"), dict) else "",
             },
         )
+
+    def classifier(self) -> Classifier:
+        if self._classifier is None:
+            mentions = [n for name, rule in self.agents.items() for n in (name, *rule.bot_logins)]
+            self._classifier = classifier_for(self.cfg.section("review"), mentions)
+        return self._classifier
+
+    def _review_comments(
+        self, spec: RepoSpec, record: dict[str, Any], timeline: list[dict[str, Any]], old: dict[str, Any]
+    ) -> None:
+        """Human review comments, each with a category. Text is filtered, classified and dropped; a comment
+        already classified (same id, not edited since) keeps its category without asking the classifier again."""
+        author = record["author"]
+        raw: list[dict[str, Any]] = []
+        for ev in timeline:
+            if ev.get("event") in ("reviewed", "commented") and (ev.get("body") or "").strip():
+                raw.append(
+                    {
+                        "id": f"{ev['event'][0]}{ev.get('id')}",
+                        "kind": ev["event"],
+                        "user": ev.get("user") or {},
+                        "body": ev["body"],
+                        "at": ev.get("submitted_at") or ev.get("created_at"),
+                        "updated": ev.get("updated_at") or ev.get("submitted_at") or ev.get("created_at"),
+                    }
+                )
+        try:
+            inline = self.gh.review_comments(spec.name, record["number"])
+        except GitHubError:
+            inline = []
+        for c in inline:
+            raw.append(
+                {
+                    "id": f"i{c.get('id')}",
+                    "kind": "inline",
+                    "user": c.get("user") or {},
+                    "body": c.get("body") or "",
+                    "at": c.get("created_at"),
+                    "updated": c.get("updated_at") or c.get("created_at"),
+                }
+            )
+        humans = [c for c in raw if c["user"].get("type") != "Bot" and c["user"].get("login") != author]
+        record["bot_review_comments"] = sum(1 for c in raw if c["user"].get("type") == "Bot")
+        known = {
+            c["id"]: c for c in old.get("review_comments") or [] if c.get("category") not in (None, "unclassified")
+        }
+        excerpts = bool(self.cfg.section("guardrails").get("comment_excerpts")) and not record["restricted"]
+        todo = [c for c in humans if c["id"] not in known or known[c["id"]].get("updated") != c["updated"]]
+        texts = [self.flt.clean(c["body"])[0] for c in todo]
+        try:
+            labels = self.classifier().classify(texts) if texts else []
+        except Exception as exc:  # a classifier that's down must not stop the sync; retried next time
+            print(f"  review classifier unavailable ({type(exc).__name__}); comments left unclassified", flush=True)
+            labels = []
+        fresh = {c["id"]: (lb.category, lb.steering, text) for c, lb, text in zip(todo, labels, texts, strict=False)}
+        out = []
+        for c in humans:
+            if c["id"] in fresh:
+                category, steering, text = fresh[c["id"]]
+            elif c["id"] in known and known[c["id"]].get("updated") == c["updated"]:
+                category, steering, text = known[c["id"]]["category"], known[c["id"]].get("steering", False), ""
+            else:
+                category, steering, text = "unclassified", False, ""
+            row = {
+                "id": c["id"],
+                "kind": c["kind"],
+                "at": c["at"],
+                "updated": c["updated"],
+                "reviewer": c["user"].get("login", ""),
+                "category": category,
+                "steering": steering,
+            }
+            if excerpts and text:
+                row["excerpt"] = text[:200]
+            elif excerpts and c["id"] in known and known[c["id"]].get("excerpt"):
+                row["excerpt"] = known[c["id"]]["excerpt"]
+            out.append(row)
+        record["review_comments"] = out
 
     def sync_deployments(self, spec: RepoSpec, since: str) -> None:
         envs = list(self.cfg.section("metrics").get("production_environments") or ["production", "prod"])

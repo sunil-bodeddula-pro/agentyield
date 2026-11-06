@@ -15,6 +15,7 @@ agentyield recompute                 rebuild derived files from stored facts, wi
 agentyield metrics [--scope team:x]  agent share of code, speed, review and reliability, agent against human
 agentyield serve [--every 15m]       the live dashboard, syncing on a timer
 agentyield build [--out site]        the dashboard as static files: totals only, no PR list or titles
+agentyield classifier eval           accuracy of the review-comment classifier on a labelled sample
 """
 
 from __future__ import annotations
@@ -34,6 +35,7 @@ from . import config as cfgmod
 from .derive import SUMMARY, attribution_path, clear_correction, corrections, recompute, set_correction
 from .github import AppToken, GitHub, GitHubError, token_from
 from .ops import applied_repos, apply, diff, snapshot, status
+from .review import classifier_for, evaluate, load_sample
 from .schema import json_schema
 from .store import LeaseHeld, Store
 from .sync import Syncer, days_ago, iso, run_sync
@@ -344,6 +346,16 @@ def cmd_metrics(args: argparse.Namespace) -> int:
         for key, v in m["metrics"].items():
             kind = "h" if "hours" in key else "pct" if "rate" in key else "num"
             print(f"  {key.replace('_', ' '):<40} agent {fmt(v['agent'], kind):>7}   human {fmt(v['human'], kind):>7}")
+    shares = {g: block["groups"][g].get("review_category_share") or {} for g in ("agent", "human")}
+    if shares["agent"] or shares["human"]:
+        print("What reviewers flag (share of review comments):")
+        cats = sorted(set(shares["agent"]) | set(shares["human"]), key=lambda c: -shares["agent"].get(c, 0))
+        for cat in cats[:8]:
+            print(
+                f"  {cat:<40} agent {fmt(shares['agent'].get(cat), 'pct'):>5}   human "
+                f"{fmt(shares['human'].get(cat), 'pct'):>5}"
+            )
+        print(f"  {'steering comments per agent PR':<40} {fmt(block['groups']['agent']['steering_per_pr'], 'num'):>11}")
     dl = block.get("delivery") or {}
     if dl.get("deployments"):
         print(
@@ -393,6 +405,37 @@ def cmd_build(args: argparse.Namespace) -> int:
     for path in web.build_site(store, out):
         print(f"wrote {path}")
     print("The static copy shows totals only: no PR list and no titles.")
+    return 0
+
+
+def cmd_classifier(args: argparse.Namespace) -> int:
+    """Measure the review-comment classifier against a labelled sample and record the result for the admin view."""
+    current = load_config(args.config)
+    review = current.section("review")
+    mentions = [n for name, rule in current.agents().items() for n in (name, *rule.bot_logins)]
+    clf = classifier_for(review, mentions)
+    sample_path = args.sample or review.get("sample")
+    if sample_path and not os.path.isabs(str(sample_path)) and "://" not in current.source:
+        sample_path = cfgmod.sibling(current.source, str(sample_path))
+    result = evaluate(clf, load_sample(str(sample_path) if sample_path else None))
+    result["sample_source"] = "your labelled sample" if sample_path else "the built-in sample (written by the authors)"
+    result["measured_at"] = iso(datetime.now(UTC))
+    Store(current.store_uri).write("derived/classifier_eval.json", result)
+    print(
+        f"Classifier {result['classifier']}: {result['exact']} of {result['sample']} exact "
+        f"({result['accuracy']:.0%}) on {result['sample_source']}"
+    )
+    for cat, v in result["per_category"].items():
+        if v["support"]:
+            print(
+                f"  {cat:<15} recall {fmt(v['recall'], 'pct'):>5}  precision {fmt(v['precision'], 'pct'):>5}"
+                f"  ({v['support']} labelled)"
+            )
+    if result["top_confusions"]:
+        print(
+            "Most common mix-ups: "
+            + ", ".join(f"{c['label']} read as {c['predicted']} ({c['count']})" for c in result["top_confusions"][:4])
+        )
     return 0
 
 
@@ -530,6 +573,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     bd = sub.add_parser("build", help="write the dashboard as static files (totals only)")
     bd.add_argument("--out", help="folder to write (default outputs.static_site, or ./site)")
+    cl = sub.add_parser("classifier", help="measure the review-comment classifier")
+    clsub = cl.add_subparsers(dest="action", required=True)
+    ce = clsub.add_parser("eval", help="accuracy against a labelled sample (JSONL of {text, label})")
+    ce.add_argument("--sample", help="labelled sample; default review.sample, else the built-in one")
     me = sub.add_parser("metrics", help="agent share, speed, review and reliability; agent against human")
     me.add_argument("--scope", help="org (default), team:<name> or repo:<owner/name>")
     me.add_argument("--json", action="store_true")
@@ -560,6 +607,7 @@ def main(argv: list[str] | None = None) -> int:
             "metrics": cmd_metrics,
             "serve": cmd_serve,
             "build": cmd_build,
+            "classifier": cmd_classifier,
         }
         return int(commands[args.cmd](args))
     except cfgmod.ConfigError as exc:

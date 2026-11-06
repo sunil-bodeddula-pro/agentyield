@@ -7,7 +7,7 @@
 | 3 | Metrics engine | Agent share of code; functionality shipped; speed, review and reliability metrics; matched agent-against-human comparison; rolling trends | Done |
 | 4 | Dashboard | `agentyield serve` and `build`: organisation, team, repository and admin views; GitHub App sign-in | Done |
 | 5 | Quality signals | First-run CI pass, coverage on changed lines, code-scanning findings, code survival, lead time to production from deployments | Done |
-| 6 | Review-comment classifier | What reviewers keep catching that agents miss | Next |
-| 7 | Issue trackers and cost | Jira and Linear; optional vendor analytics for cost | Planned |
+| 6 | Review-comment classifier | What reviewers keep catching that agents miss: rules, any OpenAI-compatible endpoint, or Anthropic; measured accuracy | Done |
+| 7 | Issue trackers and cost | Jira and Linear; optional vendor analytics for cost | Next |
 | 8 | Feedback loop and digests | Suggested `AGENTS.md` rules, before-and-after comparisons, weekly digests | Planned |
 | 9 | Packaging and release | PyPI, Docker image, publishing to private GitHub Pages or a bucket | Planned |

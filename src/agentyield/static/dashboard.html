@@ -254,6 +254,14 @@ td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
           <tr><td>New code-scanning findings per PR, agent / human</td><td class="n">${num(g.agent.scan_alerts_per_pr)} / ${num(g.human.scan_alerts_per_pr)}</td></tr>
           <tr><td>Fix-up commits after a CI failure per PR, agent / human</td><td class="n">${num(g.agent.fixups_after_ci_failure_per_pr)} / ${num(g.human.fixups_after_ci_failure_per_pr)}</td></tr>
         </tbody></table></div>`),
+      card("What reviewers flag", "Share of human review comments by category. Larger agent bars show what reviewers keep catching in agent work.",
+        (() => {
+          const a = g.agent.review_category_share || {}, h = g.human.review_category_share || {};
+          const cats = [...new Set([...Object.keys(a), ...Object.keys(h)])].sort((x, y) => (a[y] || 0) - (a[x] || 0)).slice(0, 8);
+          if (!cats.length) return `<div class="empty">No classified review comments yet.</div>`;
+          return grouped(cats.map((c) => ({ name: c.replace("_", " "), get: (k) => (k === "agent" ? a : h)[c] ?? 0 })), ["agent", "human"], pct, "Review comment categories")
+            + `<p class="sub" style="margin-top:10px">Steering comments (instructions to an agent) per agent PR: <b>${num(g.agent.steering_per_pr)}</b></p>`;
+        })()),
       card("Agent against human, matched", `Human PRs reweighted to the same repositories and sizes as ${m.agent_prs_matched ?? 0} of ${m.agent_prs ?? 0} agent PRs.`,
         matchedRows ? `<div class="wrap"><table><thead><tr><th>Metric</th><th class="n">Agent</th><th class="n">Human</th></tr></thead><tbody>${matchedRows}</tbody></table></div>` : `<div class="empty">Not enough comparable work yet.</div>`),
     ].join("");
@@ -272,6 +280,7 @@ td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
     ["Coverage on changed lines (median)", "median_coverage_changed", (v) => v == null ? "–" : `${v.toFixed(1)}%`],
     ["New code-scanning findings per PR", "scan_alerts_per_pr", num], ["Code still alive after 30+ days", "code_survival", pct],
     ["Hours from first commit to production (median)", "median_hours_to_production", hrs],
+    ["Review comments per PR", "review_comments_per_pr", num], ["Steering comments per PR", "steering_per_pr", num],
   ];
   function table(b) {
     const g = b.groups;
@@ -303,7 +312,9 @@ td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
     const res = await fetch("api/admin");
     if (!res.ok) return;
     const a = await res.json();
-    $("#admin").innerHTML = `<p class="sub">Last sync ${esc(a.last_sync?.at || "never")} · config ${esc(a.config || "")} · ${a.corrections} corrections${a.hidden.length ? ` · hidden: ${esc(a.hidden.join(", "))}` : ""}</p>
+    const c = a.classifier || {};
+    const acc = c.accuracy == null ? "not measured yet: run agentyield classifier eval" : `${pct(c.accuracy)} exact match on ${c.sample} comments from ${esc(c.sample_source)} (${esc((c.measured_at || "").slice(0, 10))})`;
+    $("#admin").innerHTML = `<p class="sub">Review classifier: <b>${esc(c.name)}</b> · accuracy ${acc}</p><p class="sub">Last sync ${esc(a.last_sync?.at || "never")} · config ${esc(a.config || "")} · ${a.corrections} corrections${a.hidden.length ? ` · hidden: ${esc(a.hidden.join(", "))}` : ""}</p>
       <table><thead><tr><th>Repository</th><th>Team</th><th class="n">PRs</th><th class="n">Coverage</th><th class="n">Medium confidence</th><th>History from</th><th>Synced</th></tr></thead><tbody>${
       a.repos.map((r) => `<tr><td>${esc(r.repo)}${r.restricted ? ` <span class="muted">restricted</span>` : ""}</td><td>${esc(r.team)}</td><td class="n">${num(r.prs)}</td><td class="n">${pct(r.coverage)}</td><td class="n">${num(r.low_confidence)}</td><td>${esc((r.history_from || "").slice(0, 10))}</td><td>${esc((r.synced_at || "").slice(0, 16))}</td></tr>`).join("")}</tbody></table>`;
   }
