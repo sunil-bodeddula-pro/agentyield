@@ -17,6 +17,7 @@ from typing import Any
 from .attribution import DEFAULT_IGNORED, DEFAULT_THRESHOLD, LABELS, attribute
 from .config import Config, RepoSpec
 from .cost import allocate, gather
+from .feedback import experiment, suggestions
 from .guardrails import Filter
 from .metrics import Settings, pr_metrics, rollup
 from .store import Store
@@ -38,6 +39,36 @@ def recompute_with_cost(store: Store, cfg: Config, repos: dict[str, RepoSpec]) -
     base = "" if "://" in cfg.source else os.path.dirname(os.path.abspath(os.path.expanduser(cfg.source)))
     if refresh_cost(store, cfg, repos, base) is not None:
         recompute(store, cfg, repos)
+
+
+FEEDBACK = "derived/feedback.json"
+
+
+def write_feedback(store: Store, cfg: Config, rows: list[dict[str, Any]], now: datetime) -> dict[str, Any]:
+    """Suggested agent rules per scope, and before-and-after comparisons for the recorded changes."""
+    fb = cfg.section("feedback")
+    weeks, min_comments = int(fb.get("weeks") or 8), int(fb.get("min_comments") or 3)
+    counted = [r for r in rows if r["group"] != "excluded"]
+    scopes: dict[str, list[dict[str, Any]]] = {"org": counted}
+    for r in counted:
+        scopes.setdefault(f"repo:{r['repo']}", []).append(r)
+        if r["team"]:
+            scopes.setdefault(f"team:{r['team']}", []).append(r)
+    flt = cfg.filter()
+    exps = []
+    for exp in cfg.data.get("experiments") or []:
+        result = experiment(
+            rows, exp, int(fb.get("experiment_weeks") or 4), metric_settings(cfg).min_sample, now.date()
+        )
+        result["name"], result["note"] = flt.clean(result["name"])[0], flt.clean(result["note"])[0]
+        exps.append(result)
+    data = {
+        "built_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "scopes": {s: suggestions(sel, now, weeks, min_comments) for s, sel in sorted(scopes.items())},
+        "experiments": exps,
+    }
+    store.write(FEEDBACK, data)
+    return data
 
 
 def tracker_issues(store: Store) -> dict[str, dict[str, Any]]:
@@ -115,6 +146,7 @@ def write_rollup(store: Store, cfg: Config, now: datetime | None = None) -> dict
         "cost": {k: v for k, v in (store.read(COST, {}) or {}).items() if k in ("total_usd", "unallocated_usd")},
     }
     store.write(SUMMARY, data)
+    write_feedback(store, cfg, rows, when)
     return data
 
 

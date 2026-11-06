@@ -356,6 +356,25 @@ SCHEMA = Obj(
             },
             description="How review comments are sorted into categories",
         ),
+        "experiments": List(
+            Obj(
+                required=("name", "date"),
+                fields={
+                    "name": Str("What changed, e.g. 'Switched payments to a new agent'"),
+                    "date": Str("When it changed", re.compile(r"^\d{4}-\d{2}-\d{2}$"), "use YYYY-MM-DD"),
+                    "scope": Str("org (default), team:<name> or repo:<owner/name>"),
+                    "note": Str(),
+                },
+            ),
+            "Changes to compare before and after",
+        ),
+        "feedback": Obj(
+            {
+                "weeks": Int("Weeks of review comments behind each suggestion (default 8)", minimum=1),
+                "experiment_weeks": Int("Weeks compared on each side of a recorded change (default 4)", minimum=1),
+                "min_comments": Int("Fewest comments that can make a suggestion (default 3)", minimum=1),
+            }
+        ),
         "outputs": Obj(
             {
                 "dashboard": Obj(
@@ -376,7 +395,25 @@ SCHEMA = Obj(
                 ),
                 "static_site": Str(),
                 "publish": Str("github-pages:owner/repo, gs://… or s3://…"),
-                "digest": Obj({"slack_webhook_env": Str()}),
+                "digest": Obj(
+                    {
+                        "scopes": List(Str("org, team:<name> or repo:<owner/name>")),
+                        "webhook_env": Str("Environment variable with a Slack-compatible incoming webhook URL"),
+                        "email": Obj(
+                            required=("host", "from", "to"),
+                            fields={
+                                "host": Str(),
+                                "port": Int(minimum=1, maximum=65535),
+                                "from": Str(),
+                                "to": TEXTS,
+                                "username_env": Str(),
+                                "password_env": Str(),
+                                "starttls": Bool(),
+                            },
+                        ),
+                        "schedule": Str("Weekday and time for `serve` to send it, e.g. 'Mon 09:00'"),
+                    }
+                ),
             }
         ),
     },

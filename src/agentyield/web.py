@@ -29,7 +29,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
 from .config import Config, RepoSpec
-from .derive import SUMMARY, attribution_path, corrections, metrics_path
+from .derive import FEEDBACK, SUMMARY, attribution_path, corrections, metrics_path
 from .github import GitHub, GitHubError, post_json
 from .store import Store
 
@@ -172,9 +172,20 @@ class Dashboard:
             "scopes": names,
             "scope": scope,
             "data": scopes.get(scope),
+            "feedback": self.feedback(v, scope),
             "viewer": {"login": v.login, "admin": v.admin},
             "mode": "live",
         }
+
+    def feedback(self, v: Viewer, scope: str) -> dict[str, Any]:
+        """Suggestions for this scope, and the recorded changes whose scope the viewer can read."""
+        fb = self.store.read(FEEDBACK) or {}
+        exps = [
+            e
+            for e in fb.get("experiments") or []
+            if not str(e.get("scope", "")).startswith("repo:") or self.allowed(v, str(e["scope"])[5:])
+        ]
+        return {"suggestions": (fb.get("scopes") or {}).get(scope) or [], "experiments": exps}
 
     def prs(self, v: Viewer, scope: str, page: int, per_page: int) -> dict[str, Any]:
         rows: list[dict[str, Any]] = []
@@ -364,6 +375,7 @@ def build_site(store: Store, out_dir: str) -> list[str]:
         "built_at": data.get("built_at"),
         "min_sample": data.get("min_sample"),
         "scopes": scopes,
+        "feedback": store.read(FEEDBACK) or {},
         "mode": "static",
     }
     os.makedirs(os.path.join(out_dir, "data"), exist_ok=True)

@@ -6,7 +6,7 @@
 
 It runs on a laptop or a remote machine, with no database: data lives in JSON files in a folder or a `gs://` / `s3://` bucket.
 
-> **Status: early development.** Batches 1 to 7 of 9 are done: configuration, GitHub sync, the sensitive-data filter, attribution, the metrics engine, the dashboard with GitHub sign-in, quality signals, the review-comment classifier, and features and spend. See the [roadmap](docs/ROADMAP.md).
+> **Status: early development.** Batches 1 to 8 of 9 are done: configuration, GitHub sync, the sensitive-data filter, attribution, the metrics engine, the dashboard with GitHub sign-in, quality signals, the review-comment classifier, features and spend, and the feedback loop with weekly digests. See the [roadmap](docs/ROADMAP.md).
 
 ## What works today
 
@@ -20,6 +20,7 @@ It runs on a laptop or a remote machine, with no database: data lives in JSON fi
 - `agentyield label set owner/repo#42 agent --agent claude-code --note "…"`: an admin correction that always wins and survives re-syncs (`label clear`, `label list`).
 - `agentyield recompute`: rebuilds the derived files from stored facts after a rule change, with no GitHub calls.
 - `agentyield metrics [--scope team:payments | repo:acme/app] [--json]`: the numbers below for agent, assisted and human work side by side, a matched comparison, and the last 4 weeks against the 4 before.
+- `agentyield suggest`, `agentyield experiments`, `agentyield digest`: rules to add to your agents' instructions, before-and-after comparisons, and a weekly digest (below).
 
 ## What reviewers flag
 
@@ -77,6 +78,60 @@ cost:
 
 A person's spend on a day is shared equally across the agent and assisted PRs they authored that had commits that day (or were open that day); anything that can't be matched is reported as unallocated rather than guessed. Daily spend per person is never stored: only the per-PR allocations and unallocated daily totals are, and the people map (with its emails) stays in the live config, never in the store. Tools without a per-use cost, such as seat-based subscriptions, can be included by exporting their cost per person per day to the file.
 
+## Feedback loop and digests
+
+**Suggested agent rules.** When reviewers keep flagging one category on agent PRs clearly more than on human PRs (by default at least 3 comments in the last 8 weeks, and at least 1.5 times the human share), or agent PRs keep failing CI on the first push, or reviewers keep steering agents in comments, AgentYield drafts a rule for your agents' instructions file: `AGENTS.md`, `CLAUDE.md`, `.cursorrules`, `copilot-instructions.md` or whatever your agents read.
+
+```bash
+agentyield suggest --scope team:payments      # Markdown, ready to review and paste; --json for the numbers
+```
+
+The drafts come from templates, not a model, with the evidence behind each one. They are suggestions for a person to review: AgentYield never writes to a repository.
+
+**Before and after.** Record a change, such as a new agent, model or instructions file, and AgentYield compares agent work in the weeks before and after it, with sample sizes:
+
+```yaml
+experiments:
+  - name: Tests-first rule in AGENTS.md
+    date: 2026-10-01
+    scope: team:payments           # org (default), team:<name> or repo:<owner/name>
+    note: Added after reviewers kept asking for tests
+feedback:
+  weeks: 8                         # review comments behind each suggestion
+  min_comments: 3
+  experiment_weeks: 4              # weeks compared on each side of a change
+```
+
+```bash
+agentyield experiments
+```
+
+Other things change at the same time, so read these as signals, not proof. Both appear on the dashboard as **Suggested agent rules** and **Before and after changes**; a change recorded for a repository shows only to people who can read it.
+
+**Weekly digest.** A short summary per scope: agent share of merged code, PRs merged, time to merge and merge rate against the 4 weeks before, first-push CI, features done, what reviewers flag most, and the top suggested rule. It carries totals only, like a static copy: no PR or feature titles and no comment text.
+
+```yaml
+outputs:
+  digest:
+    scopes: [org, team:payments]
+    webhook_env: AGENTYIELD_WEBHOOK    # a Slack-compatible incoming webhook (Slack, Mattermost, Rocket.Chat)
+    email:                             # and/or plain SMTP
+      host: smtp.acme.com
+      port: 587
+      from: agentyield@acme.com
+      to: [eng-leads@acme.com]
+      username_env: SMTP_USER
+      password_env: SMTP_PASSWORD
+    schedule: "Mon 09:00"              # in metrics.working_hours' time zone
+```
+
+```bash
+agentyield digest                  # print it
+agentyield digest --send           # send it now
+```
+
+`agentyield serve` sends it on schedule, once a week, after a sync. Recipients are read from the live config file, not the copy kept in the store.
+
 ## Dashboard
 
 ```bash
@@ -84,7 +139,7 @@ agentyield serve                 # live dashboard on http://127.0.0.1:8780, sync
 agentyield build --out site      # static copy: totals only, no PR list or titles
 ```
 
-KPI cards (agent share of merged code, PRs merged by who wrote them, time to merge, merge rate, back-and-forth, functionality shipped), weekly trend charts, effectiveness and back-and-forth by group, the matched comparison, every metric in one table, a paginated PR list, and an admin view of sync state and attribution coverage. Choose the organisation, a team or a repository at the top. Dark and light themes; works on a phone.
+KPI cards (agent share of merged code, PRs merged by who wrote them, time to merge, merge rate, back-and-forth, functionality shipped), weekly trend charts, effectiveness and back-and-forth by group, the matched comparison, every metric in one table, a paginated PR list, and suggested agent rules, before-and-after changes, and an admin view of sync state and attribution coverage. Choose the organisation, a team or a repository at the top. Dark and light themes; works on a phone.
 
 ### Who sees what
 

@@ -16,6 +16,9 @@ agentyield metrics [--scope team:x]  agent share of code, speed, review and reli
 agentyield serve [--every 15m]       the live dashboard, syncing on a timer
 agentyield build [--out site]        the dashboard as static files: totals only, no PR list or titles
 agentyield classifier eval           accuracy of the review-comment classifier on a labelled sample
+agentyield suggest [--scope team:x]  draft rules for the agents' instructions from what reviewers flag on agent PRs
+agentyield experiments               agent work before and after each change recorded under `experiments`
+agentyield digest [--send]           the weekly digest per scope; prints it, or sends it with --send
 """
 
 from __future__ import annotations
@@ -30,9 +33,10 @@ import sys
 from datetime import UTC, datetime
 from typing import Any
 
-from . import __version__, web
+from . import __version__, digest, web
 from . import config as cfgmod
 from .derive import (
+    FEEDBACK,
     SUMMARY,
     attribution_path,
     clear_correction,
@@ -41,7 +45,9 @@ from .derive import (
     recompute_with_cost,
     set_correction,
 )
+from .feedback import as_markdown
 from .github import AppToken, GitHub, GitHubError, token_from
+from .metrics import zone
 from .ops import applied_repos, apply, diff, snapshot, status
 from .review import classifier_for, evaluate, load_sample
 from .schema import json_schema
@@ -398,6 +404,98 @@ def cmd_metrics(args: argparse.Namespace) -> int:
     return 0
 
 
+def _feedback(store: Store) -> dict[str, Any]:
+    data = store.read(FEEDBACK)
+    if not data:
+        raise SystemExit("No feedback yet: run `agentyield sync` or `agentyield recompute`.")
+    return dict(data)
+
+
+def cmd_suggest(args: argparse.Namespace) -> int:
+    store, _, _ = applied_state(args)
+    data, scope = _feedback(store), args.scope or "org"
+    if scope not in data["scopes"]:
+        raise SystemExit(f"no scope {scope!r}; choose from: {', '.join(data['scopes'])}")
+    items = data["scopes"][scope]
+    if args.json:
+        print(json.dumps(items, indent=1))
+    else:
+        print(as_markdown(scope, items), end="")
+    return 0
+
+
+def cmd_experiments(args: argparse.Namespace) -> int:
+    store, _, _ = applied_state(args)
+    exps = _feedback(store)["experiments"]
+    if args.json:
+        print(json.dumps(exps, indent=1))
+        return 0
+    if not exps:
+        print("No changes recorded. Add them under `experiments` in agentyield.yaml (name, date, scope, note).")
+        return 0
+    for e in exps:
+        state = "" if e["complete"] else f"  (fewer than {e['weeks']} weeks since; still filling in)"
+        print(f"{e['name']}  {e['date']}  {e['scope']}{state}")
+        if e["note"]:
+            print(f"  {e['note']}")
+        b, a = e["before"], e["after"]
+        print(f"  {'':<40} {'before':>8} {'after':>8}")
+        for key, kind in (
+            ("agent_prs", "num"),
+            ("merged", "num"),
+            ("merge_rate", "pct"),
+            ("median_hours_to_merge", "h"),
+            ("commits_after_first_review_per_pr", "num"),
+            ("ci_first_pass_rate", "pct"),
+            ("review_comments_per_pr", "num"),
+            ("revert_rate", "pct"),
+            ("follow_up_fix_rate", "pct"),
+            ("agent_share_of_code", "pct"),
+        ):
+            print(f"  {key.replace('_', ' '):<40} {fmt(b[key], kind):>8} {fmt(a[key], kind):>8}")
+    print("Other things change at the same time: read these as signals, not proof.")
+    return 0
+
+
+DIGEST_SENT = "digest.json"
+
+
+def send_digests(store: Store, live: cfgmod.Config, now: datetime | None = None, force: bool = False) -> list[str]:
+    """Send the digest for each configured scope when it is due (or now, with force). Returns what was sent."""
+    cfg = dict(live.section("outputs").get("digest") or {})
+    if not cfg:
+        return []
+    summary, feedback = store.read(SUMMARY) or {}, store.read(FEEDBACK) or {}
+    tz = zone(str((live.section("metrics").get("working_hours") or {}).get("timezone") or "UTC"))
+    now_local = (now or datetime.now(UTC)).astimezone(tz)
+    sent_state = store.read(DIGEST_SENT, {}) or {}
+    if not force and not digest.due(str(cfg.get("schedule") or "Mon 09:00"), now_local, sent_state.get("sent_at")):
+        return []
+    done = []
+    for scope in cfg.get("scopes") or ["org"]:
+        where = digest.deliver(cfg, scope, digest.compose(summary, feedback, scope))
+        done += [f"{scope} by {w}" for w in where]
+    store.write(DIGEST_SENT, {"sent_at": now_local.isoformat(), "sent": done})
+    return done
+
+
+def cmd_digest(args: argparse.Namespace) -> int:
+    live = load_config(args.config)
+    store, _, _ = applied_state(args)
+    if args.send:
+        if not live.section("outputs").get("digest"):
+            raise SystemExit("Configure outputs.digest (a webhook_env or email) to send the digest.")
+        sent = send_digests(store, live, force=True)
+        print("Sent: " + ", ".join(sent) if sent else "Nothing sent: set the webhook variable or the email settings.")
+        return 0
+    summary, feedback = store.read(SUMMARY) or {}, store.read(FEEDBACK) or {}
+    scopes = (
+        [args.scope] if args.scope else list((live.section("outputs").get("digest") or {}).get("scopes") or ["org"])
+    )
+    print("\n\n".join(digest.compose(summary, feedback, s) for s in scopes))
+    return 0
+
+
 def parse_every(value: str) -> int:
     m = re.fullmatch(r"(\d+)([smh]?)", value or "")
     if not m:
@@ -411,14 +509,21 @@ def cmd_serve(args: argparse.Namespace) -> int:
     host = args.host or str(dash.get("host") or "127.0.0.1")
     port = args.port or int(dash.get("port") or 8780)
     every = 0 if args.no_sync else parse_every(args.every)
+
+    def sync_then_digest() -> None:
+        cmd_sync(args)
+        live = load_config(args.config)  # digest recipients come from the live file, never the stored copy
+        for line in send_digests(store, live):
+            print(f"digest sent: {line}", flush=True)
+
     if every:
         print(f"Syncing every {every // 60} minutes; first sync now.", flush=True)
-        cmd_sync(args)
+        sync_then_digest()
     web.serve(
         web.Dashboard.from_config(store, cfg, repos),
         host,
         port,
-        sync=lambda: cmd_sync(args),
+        sync=sync_then_digest,
         every=every,
         allow_unauthenticated=args.allow_unauthenticated,
     )
@@ -610,6 +715,14 @@ def build_parser() -> argparse.ArgumentParser:
     at.add_argument("--repo", help="only this owner/name")
     at.add_argument("--prs", action="store_true", help="list every PR with its label and evidence")
     at.add_argument("--json", action="store_true")
+    sg = sub.add_parser("suggest", help="draft rules for the agents' instructions from what reviewers flag")
+    sg.add_argument("--scope", help="org (default), team:<name> or repo:<owner/name>")
+    sg.add_argument("--json", action="store_true")
+    ex = sub.add_parser("experiments", help="agent work before and after each recorded change")
+    ex.add_argument("--json", action="store_true")
+    dg = sub.add_parser("digest", help="the weekly digest: print it, or --send it now")
+    dg.add_argument("--scope", help="one scope instead of outputs.digest.scopes")
+    dg.add_argument("--send", action="store_true", help="send to the configured webhook and email now")
     return p
 
 
@@ -634,6 +747,9 @@ def main(argv: list[str] | None = None) -> int:
             "serve": cmd_serve,
             "build": cmd_build,
             "classifier": cmd_classifier,
+            "suggest": cmd_suggest,
+            "experiments": cmd_experiments,
+            "digest": cmd_digest,
         }
         return int(commands[args.cmd](args))
     except cfgmod.ConfigError as exc:

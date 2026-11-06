@@ -31,6 +31,7 @@ Run all of them before saying a change is done, and report the results honestly.
 | `src/agentyield/review.py`, `data/review_sample.jsonl` | Review-comment classifier (rules, OpenAI-compatible, Anthropic) and its labelled sample |
 | `src/agentyield/trackers.py`, `cost.py` | Jira and Linear features; spend allocation from files or Claude Code analytics |
 | `src/agentyield/quality.py`, `survival.py` | CI, coverage, code scanning and deployments at sync time; code survival with git blame on a local mirror |
+| `src/agentyield/feedback.py`, `digest.py` | Suggested agent rules and before-and-after comparisons; the weekly digest (webhook, SMTP) and its schedule |
 | `src/agentyield/ops.py` | `config diff` / `apply`, status |
 | `src/agentyield/store.py` | JSON file store and its folder, GCS and S3 backends; the writer lease |
 | `tests/mockgh.py` | Fixture organisation with planted secrets, and a fake GitHub server |
@@ -41,7 +42,8 @@ Run all of them before saying a change is done, and report the results honestly.
 - **Leak tests must stay green.** `PLANTED` values must never appear in the store or command output. Add to them; never weaken them.
 - **Agent- and vendor-neutral.** Nothing may assume one agent or one model provider. Agent rules come from config; model-based features need a vendor-neutral path (`openai-compatible`) alongside any vendor SDK.
 - **Only configured repositories.** Never read a repository the config doesn't list or select.
-- **Read-only on GitHub.** No write calls.
+- **Read-only on GitHub.** No write calls. Suggested rules are printed for a person to review; never write them to a repository.
+- **Digests carry totals only**, like a static build: no PR or feature titles, no comment text. Recipients come from the live config, never the stored copy.
 - **No new runtime dependencies** beyond PyYAML (and tzdata on Windows); cloud clients stay optional extras imported lazily.
 - **Tests never use the network or real repositories.** Use the fake GitHub.
 - **Typed code.** mypy runs in strict mode.

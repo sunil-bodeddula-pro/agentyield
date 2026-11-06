@@ -51,6 +51,9 @@ td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
 .pill.assisted { background: color-mix(in srgb, var(--assisted) 20%, transparent); color: var(--assisted); }
 .pill.human { background: color-mix(in srgb, var(--human) 20%, transparent); color: var(--ink-2); }
 .muted { color: var(--ink-3); }
+.rules { margin: 0; padding: 0; list-style: none; display: grid; gap: 12px; }
+.rules li { padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel-2); }
+.rules .why { display: block; margin-top: 6px; font-size: 13px; color: var(--ink-3); }
 .pager { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; justify-content: space-between; margin-top: 12px; color: var(--ink-2); font-size: 14px; }
 .pager .pages { display: flex; gap: 4px; flex-wrap: wrap; }
 .pager button[disabled] { opacity: .4; cursor: default; }
@@ -73,6 +76,10 @@ td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
   <p class="note hide" id="note"></p>
   <section class="kpis" id="kpis"></section>
   <section class="charts" id="charts"></section>
+  <section class="feedback" id="feedback" style="display:grid;gap:16px;margin-bottom:16px">
+    <section class="card wide hide" id="rules-card"><h2>Suggested agent rules</h2><p class="sub">What reviewers keep flagging on agent PRs more than on human ones, drafted as rules for your agents' instructions file (AGENTS.md, CLAUDE.md, .cursorrules or any other). Review and edit before adding them; AgentYield never changes a repository.</p><ul class="rules" id="rules"></ul></section>
+    <section class="card wide hide" id="exp-card"><h2>Before and after changes</h2><p class="sub">Agent work in the weeks before and after each change recorded under <code>experiments</code>. Other things change at the same time: read these as signals, not proof.</p><div class="wrap" id="exps"></div></section>
+  </section>
   <section class="card wide" id="table-card"><h2>All metrics</h2><p class="sub">Agent, assisted and human work side by side. "–" means fewer than <span id="min"></span> PRs to go on.</p><div class="wrap" id="table"></div></section>
   <section class="card wide hide" id="prs-card" style="margin-top:16px"><h2>Pull requests</h2><p class="sub">Who wrote each one, how long it took, and how much back-and-forth it needed. Only repositories you can read on GitHub appear here.</p><div class="wrap" id="prs"></div><div class="pager" id="pager"></div></section>
   <section class="card wide hide" id="admin-card" style="margin-top:16px"><h2>Admin</h2><p class="sub">Sync state and attribution coverage per repository. Low coverage means agent work without a signal: add trailer or branch rules for your agents.</p><div class="wrap" id="admin"></div></section>
@@ -101,12 +108,32 @@ td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
     if (res && res.ok && (res.headers.get("content-type") || "").includes("json")) {
       const d = await res.json();
       render(d.data, d.scopes, d.scope, d.min_sample, d.built_at, d.viewer, "live");
+      feedback(d.feedback, d.scope);
       return;
     }
     if (!state.static) state.static = await (await fetch("data/summary.json")).json();
     const s = state.static, names = Object.keys(s.scopes || {});
     const scope = names.includes(state.scope) ? state.scope : "org";
     render(s.scopes[scope], names, scope, s.min_sample, s.built_at, null, "static");
+    const fb = s.feedback || {};
+    feedback({ suggestions: (fb.scopes || {})[scope] || [], experiments: fb.experiments || [] }, scope);
+  }
+
+  const EXP_ROWS = [
+    ["Agent PRs", "agent_prs", num], ["Merged", "merged", num], ["Merge rate", "merge_rate", pct],
+    ["Working hours to merge (median)", "median_hours_to_merge", hrs], ["Commits after first review, per PR", "commits_after_first_review_per_pr", num],
+    ["Passed CI on the first push", "ci_first_pass_rate", pct], ["Review comments per PR", "review_comments_per_pr", num],
+    ["Reverted", "revert_rate", pct], ["Needed a follow-up fix", "follow_up_fix_rate", pct], ["Agent share of merged code", "agent_share_of_code", pct],
+  ];
+  function feedback(fb, scope) {
+    const rules = (fb && fb.suggestions) || [];
+    $("#rules-card").classList.toggle("hide", !rules.length);
+    $("#rules").innerHTML = rules.map((s) => `<li>${esc(s.rule)}<span class="why">Why: ${esc(s.evidence)}.</span></li>`).join("");
+    const exps = ((fb && fb.experiments) || []).filter((e) => scope === "org" || e.scope === scope);
+    $("#exp-card").classList.toggle("hide", !exps.length);
+    $("#exps").innerHTML = exps.map((e) => `<h3 style="margin:14px 0 4px;font-size:15px">${esc(e.name)} <span class="muted">${esc(e.date)} · ${esc(scopeLabel(e.scope))}${e.complete ? "" : ` · fewer than ${e.weeks} weeks since: still filling in`}</span></h3>${e.note ? `<p class="sub">${esc(e.note)}</p>` : ""}
+      <table><thead><tr><th>Agent work</th><th class="n">${e.weeks} weeks before</th><th class="n">After</th></tr></thead><tbody>${
+      EXP_ROWS.map(([label, key, f]) => `<tr><td>${label}</td><td class="n">${f(e.before[key])}</td><td class="n">${f(e.after[key])}</td></tr>`).join("")}</tbody></table>`).join("");
   }
 
   function scopeLabel(s) { return s === "org" ? "Organisation" : s.startsWith("team:") ? `Team ${s.slice(5)}` : `Repository ${s.slice(5)}`; }

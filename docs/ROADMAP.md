@@ -9,5 +9,5 @@
 | 5 | Quality signals | First-run CI pass, coverage on changed lines, code-scanning findings, code survival, lead time to production from deployments | Done |
 | 6 | Review-comment classifier | What reviewers keep catching that agents miss: rules, any OpenAI-compatible endpoint, or Anthropic; measured accuracy | Done |
 | 7 | Issue trackers and cost | Jira and Linear features with agent share and lead time; spend per merged PR and per feature from any tool (file) or Claude Code analytics | Done |
-| 8 | Feedback loop and digests | Suggested `AGENTS.md` rules, before-and-after comparisons, weekly digests | Next |
-| 9 | Packaging and release | PyPI, Docker image, publishing to private GitHub Pages or a bucket | Planned |
+| 8 | Feedback loop and digests | Suggested rules for any agent's instructions file, before-and-after comparisons of recorded changes, weekly digests by webhook or email | Done |
+| 9 | Packaging and release | PyPI, Docker image, publishing to private GitHub Pages or a bucket | Next |
