@@ -21,7 +21,7 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
     "Topic :: Software Development :: Quality Assurance",
 ]
-dependencies = ["PyYAML>=6.0"]
+dependencies = ["PyYAML>=6.0", "tzdata; sys_platform == 'win32'"]  # Windows has no system time zone database
 
 [project.optional-dependencies]
 gcs = ["google-cloud-storage>=2.10"]

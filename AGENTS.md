@@ -4,7 +4,7 @@ Instructions for AI coding agents working on AgentYield.
 
 ## What this is
 
-AgentYield measures how much code and functionality AI agents ship, how well it holds up, and how fast, for a team or organisation. It reads GitHub, stores filtered facts as JSON files (folder, `gs://`, `s3://`), and will compute metrics and serve a dashboard. Python 3.12+, PyYAML is the only runtime dependency.
+AgentYield measures how much code and functionality AI agents ship, how well it holds up, and how fast, for a team or organisation. It reads GitHub, stores filtered facts as JSON files (folder, `gs://`, `s3://`), and will compute metrics and serve a dashboard. Python 3.12+, PyYAML is the only runtime dependency (plus tzdata on Windows, which has no system time zone database).
 
 ## Commands
 
@@ -36,7 +36,7 @@ Run all of them before saying a change is done, and report the results honestly.
 - **Leak tests must stay green.** `PLANTED` values must never appear in the store or command output. Add to them; never weaken them.
 - **Only configured repositories.** Never read a repository the config doesn't list or select.
 - **Read-only on GitHub.** No write calls.
-- **No new runtime dependencies** beyond PyYAML; cloud clients stay optional extras imported lazily.
+- **No new runtime dependencies** beyond PyYAML (and tzdata on Windows); cloud clients stay optional extras imported lazily.
 - **Tests never use the network or real repositories.** Use the fake GitHub.
 - **Typed code.** mypy runs in strict mode.
 - **Keep the store format stable** under `v1/`; a breaking change needs `v2/` and a migration.

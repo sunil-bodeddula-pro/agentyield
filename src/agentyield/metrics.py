@@ -13,10 +13,10 @@ import re
 import statistics
 from collections import defaultdict
 from collections.abc import Iterable
-from dataclasses import dataclass, field
-from datetime import UTC, date, datetime, time, timedelta
+from dataclasses import dataclass
+from datetime import UTC, date, datetime, time, timedelta, tzinfo
 from typing import Any
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 GROUPS = ("all", "agent", "assisted", "human")
 SIZE_BANDS = ((10, "XS"), (50, "S"), (250, "M"), (1000, "L"))
@@ -38,9 +38,21 @@ def duration(text: str, default: timedelta) -> timedelta:
     return {"m": timedelta(minutes=n), "h": timedelta(hours=n), "d": timedelta(days=n), "w": timedelta(weeks=n)}[unit]
 
 
+def zone(name: str) -> tzinfo:
+    """A time zone by name. UTC needs no database; others need the system's, or the tzdata package on Windows."""
+    if name.upper() in ("UTC", "Z", "ETC/UTC"):
+        return UTC
+    try:
+        return ZoneInfo(name)
+    except ZoneInfoNotFoundError:
+        raise SystemExit(
+            f"unknown time zone {name!r} in metrics.working_hours (on Windows: pip install tzdata)"
+        ) from None
+
+
 @dataclass
 class WorkingHours:
-    tz: ZoneInfo = field(default_factory=lambda: ZoneInfo("UTC"))
+    tz: tzinfo = UTC
     days: frozenset[int] = frozenset(range(5))
     start: time = time(9)
     end: time = time(18)
@@ -55,7 +67,7 @@ class WorkingHours:
             ia, ib = DAY_NAMES.index(a[:3]), DAY_NAMES.index((b or a)[:3])
             days.update(range(ia, ib + 1) if ia <= ib else [*range(ia, 7), *range(ib + 1)])
         return cls(
-            ZoneInfo(str(raw.get("timezone") or "UTC")),
+            zone(str(raw.get("timezone") or "UTC")),
             frozenset(days),
             time.fromisoformat(str(raw.get("start") or "09:00")),
             time.fromisoformat(str(raw.get("end") or "18:00")),
